@@ -75,7 +75,7 @@ Synthetic profiles only, no real student data · pseudonymous session IDs · Dyn
 
 ## Responsibilities (rebalanced: single integration owner)
 
-- **You — END-TO-END INTEGRATION OWNER.** API contract, Lambdas, DynamoDB, config pinning, Polly response handling, all fallbacks, privacy config. You merge; conflicts resolve in your favor.
+- **Ben — END-TO-END INTEGRATION OWNER.** API contract, Lambdas, DynamoDB, config pinning, Polly response handling, all fallbacks, privacy config. You merge; conflicts resolve in your favor.
 - **Rishabh —** fixtures first, then /expand and /simplify prompts + schema definitions; iterate against fixtures only. Transcribe pipeline at step 6.
 - **Diya —** split-screen UI against the frozen contract (mock server until Lambdas land), then slides/one-pager in parallel once UI is stable: hook, ethics slide, criteria mapping. Owns rehearsal + backup recording.
 
