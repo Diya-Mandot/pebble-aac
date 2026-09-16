@@ -31,13 +31,15 @@ QuickReplyID: `DONE, NEED_HELP` · system status: `PLEASE_REPEAT`
 
 ```
 POST /expand    {icons:[IconID], context:string, profileId:string}
-             → {candidates:[{id,text}], error?}
+             → {candidates:[{id,text}], source:"mock"|"live"|"fallback", error?}
 POST /simplify  {text:string}
              → {steps:[{icons:[IconID], label:string}], warnings:[{icons:[IconID], label:string}],
-                quickReplies:[QuickReplyID], transcript:string, status:"ok"|"please_repeat", error?}
+                quickReplies:[QuickReplyID], transcript:string, status:"ok"|"please_repeat",
+                source:"mock"|"live"|"fallback", error?}
 POST /speak     {text:string} → {audioBase64, contentType:"audio/mpeg"}  # Polly; bundled prerecorded clip is the labeled fallback
 GET  /profile/{id} · POST /profile/{id}             # {vocabLevel, sentenceLength, tone, interests[]}
 ```
+`source` labels every /expand and /simplify response so canned/mock output is never disguised as live (see "Fallbacks are labeled" above).
 Every AWS call has a hard fallback (canned JSON, labeled on screen). Model ID, region, timeout (10s), 1 retry — pin in one config file now.
 
 ## Build order (strict — do not skip ahead)
@@ -52,7 +54,7 @@ Every AWS call has a hard fallback (canned JSON, labeled on screen). Model ID, r
 
 **Ship line:** steps 1–4 = complete demo. 5 = strong. 6 = wow. 7 = gravy.
 
-## Test fixtures (Rishabh writes as files in /fixtures NOW — they are the spec)
+## Test fixtures (Rishabh writes as files in `backend/fixtures/` NOW — they are the spec)
 
 - Wiring line w/ negation: "take the red wire, connect it to the battery first, but make sure the switch is off" → must yield STOP/CHECK warning for "switch off"
 - Ordering: 3-step instruction → steps in order

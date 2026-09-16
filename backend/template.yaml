@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Bridge AAC backend — /expand and /simplify (mock-backed for now)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 10
+    MemorySize: 128
+
+Resources:
+  BridgeApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: dev
+      Cors:
+        AllowMethods: "'OPTIONS,POST'"
+        AllowHeaders: "'Content-Type'"
+        AllowOrigin: "'*'"
+
+  ExpandFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src.expand.app.lambda_handler
+      Events:
+        Expand:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BridgeApi
+            Path: /expand
+            Method: post
+
+  SimplifyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src.simplify.app.lambda_handler
+      Events:
+        Simplify:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BridgeApi
+            Path: /simplify
+            Method: post

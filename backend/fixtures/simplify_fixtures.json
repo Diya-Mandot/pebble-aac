@@ -1,0 +1,16 @@
+[
+  {
+    "input": "take the red wire, connect it to the battery first, but make sure the switch is off",
+    "response": {
+      "steps": [
+        { "icons": ["IDEA", "BUILD"], "label": "Take the red wire" },
+        { "icons": ["BUILD"], "label": "Connect it to the battery first" }
+      ],
+      "warnings": [
+        { "icons": ["STOP", "CHECK"], "label": "Make sure the switch is off" }
+      ],
+      "quickReplies": ["DONE", "NEED_HELP"],
+      "status": "ok"
+    }
+  }
+]
