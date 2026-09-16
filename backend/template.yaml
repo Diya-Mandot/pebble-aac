@@ -50,6 +50,16 @@ Resources:
     Properties:
       CodeUri: .
       Handler: src.simplify.app.lambda_handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                # Same policy as ExpandFunction (identical model/account/region constraints).
+                # Globals.Function does not support Policies (checked against AWS's SAM Globals
+                # reference), so this has to be duplicated rather than hoisted up.
+                - !Sub "arn:${AWS::Partition}:bedrock:us-east-1:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-6"
+                - !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
       Events:
         Simplify:
           Type: Api

@@ -1,7 +1,7 @@
 """Shared request validation. Returns an error string, or None if the request is valid."""
 import json
 
-from .icons import ICON_IDS
+from .icons import ICON_IDS, QUICK_REPLY_IDS
 
 
 def parse_json_body(raw_body):
@@ -73,5 +73,74 @@ def validate_expand_candidates(candidates) -> str | None:
             return "Candidate 'text' values must be unique"
         seen_ids.add(candidate_id)
         seen_texts.add(text)
+
+    return None
+
+
+MAX_LABEL_LENGTH = 200
+
+
+def _validate_icon_labeled_list(items, field_name: str, require_warning_icon: bool = False) -> str | None:
+    if not isinstance(items, list):
+        return f"'{field_name}' must be an array"
+    for item in items:
+        if not isinstance(item, dict) or set(item.keys()) != {"icons", "label"}:
+            return f"Each '{field_name}' item must be an object with exactly 'icons' and 'label' keys"
+        icons = item["icons"]
+        label = item["label"]
+        if not isinstance(icons, list) or len(icons) == 0:
+            return f"Each '{field_name}' item's 'icons' must be a non-empty array"
+        if not all(isinstance(icon, str) and icon in ICON_IDS for icon in icons):
+            return f"Each '{field_name}' item's 'icons' must contain only valid icon IDs"
+        if not isinstance(label, str) or not label.strip():
+            return f"Each '{field_name}' item's 'label' must be a non-empty string"
+        if len(label) > MAX_LABEL_LENGTH:
+            return f"'{field_name}' item's 'label' exceeds {MAX_LABEL_LENGTH} characters"
+        if require_warning_icon and not ({"STOP", "CHECK"} & set(icons)):
+            return f"Each '{field_name}' item's 'icons' must include STOP and/or CHECK"
+    return None
+
+
+def validate_simplify_response(response: dict) -> str | None:
+    """Validates a model-produced /simplify response. Returns an error string, or None if valid.
+
+    Enforces PLAN.md's strict simplification fidelity contract at the code level, not just via the
+    prompt: a "please_repeat" response can't smuggle in invented steps, an "ok" response can't be
+    a no-op, and a "warning" isn't a warning unless it actually carries a mandatory warning icon.
+    """
+    if not isinstance(response, dict):
+        return "Response must be a JSON object"
+
+    expected_keys = {"status", "steps", "warnings", "quickReplies"}
+    if set(response.keys()) != expected_keys:
+        return f"Response must contain exactly: {sorted(expected_keys)}"
+
+    status = response.get("status")
+    if status not in {"ok", "please_repeat"}:
+        return "'status' must be 'ok' or 'please_repeat'"
+
+    steps = response.get("steps")
+    error = _validate_icon_labeled_list(steps, "steps")
+    if error:
+        return error
+
+    warnings = response.get("warnings")
+    error = _validate_icon_labeled_list(warnings, "warnings", require_warning_icon=True)
+    if error:
+        return error
+
+    quick_replies = response.get("quickReplies")
+    if not isinstance(quick_replies, list) or len(quick_replies) == 0:
+        return "'quickReplies' must be a non-empty array"
+    if not all(isinstance(reply, str) and reply in QUICK_REPLY_IDS for reply in quick_replies):
+        return "'quickReplies' must contain only valid quick reply IDs"
+    if len(set(quick_replies)) != len(quick_replies):
+        return "'quickReplies' must not contain duplicates"
+
+    if status == "please_repeat":
+        if steps != [] or warnings != [] or quick_replies != ["NEED_HELP"]:
+            return "'please_repeat' responses must have empty steps/warnings and quickReplies == ['NEED_HELP']"
+    elif not steps and not warnings:
+        return "'ok' responses must include at least one step or warning"
 
     return None

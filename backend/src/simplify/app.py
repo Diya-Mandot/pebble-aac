@@ -1,20 +1,10 @@
-"""POST /simplify — mock handler. Matches submitted text against known fixtures; anything
-unrecognized returns a labeled PLEASE_REPEAT fallback rather than a canned transcript, so the
-"verbatim never silently edited" rule (PLAN.md) holds for every input, not just the scripted demo
-line. Swap the fixture matching for a real Bedrock call later without changing the response
-contract (see PLAN.md's API contract section).
-"""
-import json
-from pathlib import Path
-
+"""POST /simplify — live handler. Calls the pinned Bedrock model for a schema-constrained
+simplification; falls back to a labeled scripted/PLEASE_REPEAT response if the live call can't be
+trusted (see ../common/bedrock.py). Matches the response contract from PLAN.md's API contract
+section."""
+from ..common.bedrock import invoke_simplify
 from ..common.responses import ok, bad_request
 from ..common.validation import parse_json_body, validate_simplify_request
-
-FIXTURES_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "simplify_fixtures.json"
-
-
-def _normalize(text: str) -> str:
-    return " ".join(text.strip().lower().split())
 
 
 def lambda_handler(event, context):
@@ -27,22 +17,9 @@ def lambda_handler(event, context):
         return bad_request(error)
 
     text = payload["text"]
-    fixtures = json.loads(FIXTURES_PATH.read_text(encoding="utf-8"))
-    normalized = _normalize(text)
-    match = next((f for f in fixtures if _normalize(f["input"]) == normalized), None)
+    get_remaining_ms = context.get_remaining_time_in_millis if context is not None else (lambda: None)
+    response, source = invoke_simplify(text, get_remaining_ms)
 
-    if match is None:
-        return ok(
-            {
-                "steps": [],
-                "warnings": [],
-                "quickReplies": ["NEED_HELP"],
-                "transcript": text,
-                "status": "please_repeat",
-            },
-            source="fallback",
-        )
-
-    response = dict(match["response"])
-    response["transcript"] = text
-    return ok(response, source="mock")
+    response = dict(response)
+    response["transcript"] = text  # verbatim, always -- never model-produced
+    return ok(response, source=source)
