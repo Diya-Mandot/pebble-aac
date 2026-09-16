@@ -25,6 +25,34 @@ class ExpandContractTest(unittest.TestCase):
             self.assertIn("text", candidate)
             self.assertIsInstance(candidate["text"], str)
 
+    def test_profiles_produce_different_candidates_for_same_request(self):
+        request = {
+            "icons": ["CONFUSED", "BUILD", "HELP"],
+            "context": "classroom group project",
+        }
+        results = []
+        for profile_id in ("demo", "demo_alt"):
+            result = expand_handler(
+                {"body": json.dumps({**request, "profileId": profile_id})}, None
+            )
+            self.assertEqual(result["statusCode"], 200)
+            results.append(json.loads(result["body"])["candidates"])
+
+        self.assertNotEqual(results[0], results[1])
+
+    def test_unknown_profile_uses_documented_default_fixture(self):
+        request = {"icons": ["CONFUSED", "BUILD", "HELP"], "context": ""}
+        default_result = expand_handler(
+            {"body": json.dumps({**request, "profileId": "demo"})}, None
+        )
+        unknown_result = expand_handler(
+            {"body": json.dumps({**request, "profileId": "not-yet-loaded"})}, None
+        )
+        self.assertEqual(
+            json.loads(default_result["body"])["candidates"],
+            json.loads(unknown_result["body"])["candidates"],
+        )
+
     def test_unknown_icon_id_returns_400(self):
         event = {
             "body": json.dumps(

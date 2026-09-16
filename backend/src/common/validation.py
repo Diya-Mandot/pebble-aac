@@ -1,7 +1,13 @@
 """Shared request validation. Returns an error string, or None if the request is valid."""
 import json
 
+from jsonschema import Draft202012Validator
+
 from .icons import ICON_IDS
+from ..expand.prompt import EXPAND_OUTPUT_SCHEMA
+
+
+_EXPAND_OUTPUT_VALIDATOR = Draft202012Validator(EXPAND_OUTPUT_SCHEMA)
 
 
 def parse_json_body(raw_body):
@@ -38,4 +44,19 @@ def validate_simplify_request(payload: dict) -> str | None:
     text = payload.get("text")
     if not isinstance(text, str) or not text.strip():
         return "'text' is required and must be a non-empty string"
+    return None
+
+
+def validate_expand_output(payload: object) -> str | None:
+    """Return the first schema or candidate-identity error, if any."""
+    errors = sorted(
+        _EXPAND_OUTPUT_VALIDATOR.iter_errors(payload), key=lambda error: list(error.path)
+    )
+    if errors:
+        return errors[0].message
+
+    candidates = payload["candidates"]
+    candidate_ids = [candidate["id"] for candidate in candidates]
+    if len(candidate_ids) != len(set(candidate_ids)):
+        return "Candidate ids must be unique"
     return None

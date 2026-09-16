@@ -19,4 +19,7 @@ def lambda_handler(event, context):
         return bad_request(error)
 
     fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-    return ok(fixture, source="mock")
+    profiles = fixture["profiles"]
+    default_profile_id = fixture["defaultProfileId"]
+    selected = profiles.get(payload["profileId"], profiles[default_profile_id])
+    return ok(selected["response"], source="mock")
