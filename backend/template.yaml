@@ -5,7 +5,7 @@ Description: Bridge AAC backend — /expand and /simplify (mock-backed for now)
 Globals:
   Function:
     Runtime: python3.12
-    Timeout: 10
+    Timeout: 25
     MemorySize: 128
 
 Resources:
@@ -23,6 +23,20 @@ Resources:
     Properties:
       CodeUri: .
       Handler: src.expand.app.lambda_handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                # Region hardcoded to match src/common/config.py's AWS_REGION — this stack must be
+                # deployed to us-east-1. Using ${AWS::Region} here would silently break if ever
+                # deployed elsewhere: the Lambda would still call Bedrock in us-east-1 (per config.py)
+                # while this policy would only grant access in the deploy region.
+                - !Sub "arn:${AWS::Partition}:bedrock:us-east-1:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-6"
+                # Underlying foundation model, wildcarded across regions: AWS requires IAM permission
+                # on the foundation model in every region a cross-region profile might route to, not
+                # just the invoking region.
+                - !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
       Events:
         Expand:
           Type: Api

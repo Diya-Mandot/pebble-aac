@@ -1,29 +1,141 @@
 import json
 import unittest
+from unittest.mock import MagicMock, patch
+
+from botocore.exceptions import ClientError
 
 from src.expand.app import lambda_handler as expand_handler
 from src.simplify.app import lambda_handler as simplify_handler
+from src.common.bedrock import FIXTURES_PATH, MIN_MS_FOR_ATTEMPT
 from src.common.icons import ICON_IDS, QUICK_REPLY_IDS
 
 
+def _tool_use_response(candidates, tool_name="provide_candidates"):
+    return {
+        "stopReason": "tool_use",
+        "output": {
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "toolUse": {
+                            "toolUseId": "t1",
+                            "name": tool_name,
+                            "input": {"candidates": candidates},
+                        }
+                    }
+                ],
+            }
+        },
+    }
+
+
+VALID_CANDIDATES = [
+    {"id": "c1", "text": "I'm confused about how to build this."},
+    {"id": "c2", "text": "I don't understand this part of the build."},
+    {"id": "c3", "text": "Something about the build is confusing me."},
+]
+
+MALFORMED_RESPONSE = _tool_use_response([{"id": "c1", "text": "only one candidate"}])
+
+
+def _client_error(code):
+    return ClientError({"Error": {"Code": code, "Message": "boom"}}, "Converse")
+
+
 class ExpandContractTest(unittest.TestCase):
-    def test_candidates_use_valid_icon_derived_shape(self):
-        event = {
+    def _event(self, icons=("CONFUSED", "BUILD", "HELP"), context=""):
+        return {
             "body": json.dumps(
-                {"icons": ["CONFUSED", "BUILD", "HELP"], "context": "", "profileId": "demo"}
+                {"icons": list(icons), "context": context, "profileId": "demo"}
             )
         }
-        result = expand_handler(event, None)
-        self.assertEqual(result["statusCode"], 200)
 
-        body = json.loads(result["body"])
-        self.assertEqual(body["source"], "mock")
+    def _assert_valid_shape(self, body):
         self.assertIn("candidates", body)
-        self.assertGreater(len(body["candidates"]), 0)
+        self.assertEqual(len(body["candidates"]), 3)
         for candidate in body["candidates"]:
             self.assertIn("id", candidate)
             self.assertIn("text", candidate)
             self.assertIsInstance(candidate["text"], str)
+
+    @patch("src.common.bedrock.get_client")
+    def test_candidates_use_valid_icon_derived_shape(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.converse.return_value = _tool_use_response(VALID_CANDIDATES)
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(self._event(), None)
+        self.assertEqual(result["statusCode"], 200)
+
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "live")
+        self._assert_valid_shape(body)
+
+    @patch("src.common.bedrock.get_client")
+    def test_falls_back_to_scripted_fixture_after_exhausting_retries(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.converse.side_effect = _client_error("ThrottlingException")
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(self._event(), None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "fallback")
+        self._assert_valid_shape(body)
+        # The scripted fixture (not the mocked live model's candidates) must come back verbatim.
+        scripted = json.loads(FIXTURES_PATH.read_text(encoding="utf-8"))[0]["response"]["candidates"]
+        self.assertEqual(body["candidates"], scripted)
+
+    @patch("src.common.bedrock.get_client")
+    def test_falls_back_to_deterministic_response_for_unscripted_icons(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.converse.side_effect = _client_error("ThrottlingException")
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(self._event(icons=("AGREE", "DONE")), None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "fallback")
+        self._assert_valid_shape(body)
+        for candidate in body["candidates"]:
+            self.assertIn("agree, done", candidate["text"].lower())
+
+    @patch("src.common.bedrock.get_client")
+    def test_retries_once_on_malformed_output_then_succeeds(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.converse.side_effect = [
+            MALFORMED_RESPONSE,
+            _tool_use_response(VALID_CANDIDATES),
+        ]
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(self._event(), None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "live")
+        self.assertEqual(mock_client.converse.call_count, 2)
+
+    @patch("src.common.bedrock.get_client")
+    def test_does_not_retry_permanent_error(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.converse.side_effect = _client_error("AccessDeniedException")
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(self._event(), None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "fallback")
+        self.assertEqual(mock_client.converse.call_count, 1)
+
+    @patch("src.common.bedrock.get_client")
+    def test_skips_bedrock_call_when_insufficient_lambda_time_remains(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        context = MagicMock()
+        context.get_remaining_time_in_millis.return_value = MIN_MS_FOR_ATTEMPT - 1
+
+        result = expand_handler(self._event(), context)
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "fallback")
+        mock_client.converse.assert_not_called()
 
     def test_unknown_icon_id_returns_400(self):
         event = {

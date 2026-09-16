@@ -1,12 +1,9 @@
-"""POST /expand — mock handler. Loads fixture-shaped candidates; swap for a real Bedrock call later
-without changing the response contract (see PLAN.md's API contract section)."""
-import json
-from pathlib import Path
-
+"""POST /expand — live handler. Calls the pinned Bedrock model for schema-constrained candidates;
+falls back to a labeled scripted/deterministic response if the live call can't be trusted (see
+../common/bedrock.py). Matches the response contract from PLAN.md's API contract section."""
+from ..common.bedrock import invoke_expand
 from ..common.responses import ok, bad_request
 from ..common.validation import parse_json_body, validate_expand_request
-
-FIXTURE_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "expand_default.json"
 
 
 def lambda_handler(event, context):
@@ -18,5 +15,6 @@ def lambda_handler(event, context):
     if error:
         return bad_request(error)
 
-    fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-    return ok(fixture, source="mock")
+    get_remaining_ms = context.get_remaining_time_in_millis if context is not None else (lambda: None)
+    candidates, source = invoke_expand(payload["icons"], payload["context"], get_remaining_ms)
+    return ok({"candidates": candidates}, source=source)

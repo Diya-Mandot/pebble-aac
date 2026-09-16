@@ -1,7 +1,13 @@
-{
-  "candidates": [
-    { "id": "c1", "text": "I'm confused about how to build this. Can you help me?" },
-    { "id": "c2", "text": "I don't understand this part of the build. Could someone explain it?" },
-    { "id": "c3", "text": "Something about the build is confusing me. I need help figuring it out." }
-  ]
-}
+[
+  {
+    "icons": ["CONFUSED", "BUILD", "HELP"],
+    "context": "",
+    "response": {
+      "candidates": [
+        { "id": "c1", "text": "I'm confused about how to build this. Can you help me?" },
+        { "id": "c2", "text": "I don't understand this part of the build. Could someone explain it?" },
+        { "id": "c3", "text": "Something about the build is confusing me. I need help figuring it out." }
+      ]
+    }
+  }
+]
