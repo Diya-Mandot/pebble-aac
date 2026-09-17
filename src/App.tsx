@@ -44,7 +44,7 @@ import type {
 } from './types'
 import { emitTurn, onTurn } from './turnEmitter'
 import { ConversationBuffer } from './conversationBuffer'
-import { symbolIcon } from './symbols'
+import { symbolIconOrFallback } from './symbols'
 
 type IconDefinition = {
   id: IconId
@@ -162,7 +162,7 @@ function DynamicIconRow({
             </div>
           )
         }
-        const Icon = symbolIcon(slot.symbol)
+        const Icon = symbolIconOrFallback(slot.symbol)
         const isSelected = selectedWordKeys.has(normalizeWord(slot.word))
         return (
           <button
@@ -172,11 +172,9 @@ function DynamicIconRow({
             key={`${index}-${slot.word}`}
             onClick={() => onToggle(slot)}
           >
-            {Icon && (
-              <span className="dynamic-symbol">
-                <Icon size={18} strokeWidth={2.2} aria-hidden="true" />
-              </span>
-            )}
+            <span className="dynamic-symbol">
+              <Icon size={18} strokeWidth={2.2} aria-hidden="true" />
+            </span>
             <strong>{slot.word}</strong>
           </button>
         )
@@ -745,7 +743,7 @@ function App() {
                   <div className="selected-chips">
                     {sentence.map((token, index) => {
                       const label = token.kind === 'icon' ? iconById(token.id).label : token.word
-                      const WordIcon = token.kind === 'word' ? symbolIcon(token.symbol) : null
+                      const WordIcon = token.kind === 'word' ? symbolIconOrFallback(token.symbol) : null
                       return (
                         <button key={tokenKey(token)} onClick={() => toggleToken(token)} title={`Remove ${label}`}>
                           <span className="token-icon">

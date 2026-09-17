@@ -1,8 +1,10 @@
 // Static symbol bank for dynamic context-word tiles. Mirrors backend/src/context/symbols.py 1:1
 // (backend/tests/test_symbols.py enforces the sync) -- ids are lucide-react export names in
-// kebab-case. Unknown/missing ids render no symbol (tolerant by design): a tile is always usable
-// by its word alone, the symbol is a bonus, never a requirement.
+// kebab-case. Every word tile shows a symbol: when the model can't find a good bank match (the
+// "none" sentinel, collapsed to an absent `symbol` key before it reaches the frontend), tiles fall
+// back to FALLBACK_ICON rather than going bare.
 import {
+  CircleHelp,
   Backpack,
   BookOpen,
   NotebookPen,
@@ -191,7 +193,16 @@ export const SYMBOL_ICONS: Record<string, LucideIcon> = {
   'meh': Meh,
 }
 
+// Shown for a word whose slot has no bank symbol, so every dynamic-word tile still gets an icon.
+export const FALLBACK_ICON: LucideIcon = CircleHelp
+
 export function symbolIcon(id?: string): LucideIcon | null {
   if (!id) return null
   return SYMBOL_ICONS[id] ?? null
+}
+
+// Like symbolIcon, but never returns null -- use this anywhere a word tile is rendered so every
+// word maps to *some* symbol, even when the model found no good bank match for it.
+export function symbolIconOrFallback(id?: string): LucideIcon {
+  return symbolIcon(id) ?? FALLBACK_ICON
 }
