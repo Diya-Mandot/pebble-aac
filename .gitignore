@@ -7,3 +7,4 @@ dist/
 *.tsbuildinfo
 .env
 .env.local
+backend/local_server.log

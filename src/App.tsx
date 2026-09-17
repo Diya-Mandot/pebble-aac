@@ -153,6 +153,8 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
   const [notice, setNotice] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
+  const [isListening, setIsListening] = useState(false)
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
   const [activeMobilePanel, setActiveMobilePanel] = useState<'student' | 'group'>('student')
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const workspaceRef = useRef<HTMLElement>(null)
@@ -303,9 +305,55 @@ function App() {
     speakText(candidate.text)
   }
 
+  const toggleVoiceInput = () => {
+    if (isListening) {
+      recognitionRef.current?.stop()
+      return
+    }
+
+    const SpeechRecognitionCtor = window.SpeechRecognition ?? window.webkitSpeechRecognition
+    if (!SpeechRecognitionCtor) {
+      setNotice('Voice input needs Chrome or Edge. Type your message for now.')
+      window.setTimeout(() => setNotice(null), 3200)
+      return
+    }
+
+    const recognition = new SpeechRecognitionCtor()
+    recognition.lang = 'en-US'
+    recognition.continuous = true
+    recognition.interimResults = true
+    let finalText = ''
+
+    recognition.onresult = (event) => {
+      let interim = ''
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const chunk = event.results[i][0].transcript
+        if (event.results[i].isFinal) finalText += `${chunk} `
+        else interim += chunk
+      }
+      setPeerText(`${finalText}${interim}`.trim())
+    }
+
+    recognition.onerror = () => {
+      setNotice("Didn't catch that. Try again or type your message.")
+      window.setTimeout(() => setNotice(null), 3200)
+    }
+
+    recognition.onend = () => {
+      setIsListening(false)
+      recognitionRef.current = null
+    }
+
+    recognitionRef.current = recognition
+    setIsListening(true)
+    recognition.start()
+  }
+
   const sendPeerMessage = async () => {
     const text = peerText.trim()
     if (!text || isSimplifying) return
+
+    recognitionRef.current?.stop()
 
     setMessages((current) => [
       ...current,
@@ -710,10 +758,16 @@ function App() {
               />
               <div className="composer-actions">
                 <div className="mic-wrap">
-                  <button className="mic-button" type="button" onClick={() => setNotice('Voice notes are coming next. Type your message for now.')} aria-label="Record a voice note">
+                  <button
+                    className={`mic-button ${isListening ? 'listening' : ''}`}
+                    type="button"
+                    onClick={toggleVoiceInput}
+                    aria-pressed={isListening}
+                    aria-label={isListening ? 'Stop voice input' : 'Speak your message'}
+                  >
                     <Mic size={19} />
                   </button>
-                  <span>Voice note</span>
+                  <span>{isListening ? 'Listening…' : 'Speak'}</span>
                 </div>
                 <button className="send-button" onClick={sendPeerMessage} disabled={!peerText.trim() || isSimplifying}>
                   <span>{isSimplifying ? 'Sending…' : 'Send'}</span><Send size={18} />

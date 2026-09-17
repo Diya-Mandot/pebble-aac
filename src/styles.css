@@ -506,6 +506,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visi
 @keyframes micGlow {
   50% { box-shadow: 0 0 0 8px rgba(6, 182, 212, .04), 0 8px 25px rgba(6, 182, 212, .64); transform: scale(1.04); }
 }
+.mic-button.listening { background: var(--coral); animation: micListening 1.1s ease-in-out infinite; }
+@keyframes micListening {
+  50% { box-shadow: 0 0 0 10px rgba(233, 99, 88, .10), 0 8px 22px rgba(233, 99, 88, .55); transform: scale(1.08); }
+}
 .send-button { background: linear-gradient(135deg, #14b8a6, #0891b2); }
 
 @media (max-width: 580px) {

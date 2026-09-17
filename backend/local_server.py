@@ -5,9 +5,28 @@ No third-party packages, no SAM CLI, no Docker required for this pass.
 Run: python local_server.py [port]   (default port 8000)
 """
 import json
+import os
 import re
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+
+def _load_dotenv():
+    """Minimal .env loader (no python-dotenv dependency, per this file's dependency-free design).
+    Only sets vars not already present in the environment, so a real shell export still wins."""
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip())
+
+
+_load_dotenv()
 
 from src.expand.app import lambda_handler as expand_handler
 from src.simplify.app import lambda_handler as simplify_handler
