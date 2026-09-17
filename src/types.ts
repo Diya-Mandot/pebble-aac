@@ -39,6 +39,13 @@ export interface SimplifyResponse {
   error?: string
 }
 
+export interface SpeakResponse {
+  audioBase64: string | null
+  contentType: string
+  source: ResponseSource
+  error?: string
+}
+
 export interface ChatMessage {
   id: string
   sender: 'student' | 'peer' | 'system'

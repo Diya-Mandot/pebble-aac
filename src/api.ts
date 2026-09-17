@@ -1,4 +1,4 @@
-import type { ExpandResponse, IconId, SimplifyResponse } from './types'
+import type { ExpandResponse, IconId, SimplifyResponse, SpeakResponse } from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
@@ -69,4 +69,12 @@ export async function simplifyMessage(text: string): Promise<SimplifyResponse> {
   } catch {
     return simplifyFallback(text)
   }
+}
+
+// No synthetic fallback here, unlike expandMessage/simplifyMessage above: there's no safe canned
+// audio for arbitrary approved text (see backend/src/common/polly.py's module docstring). Callers
+// should treat a thrown error or a null audioBase64 the same way -- fall back to the browser's own
+// speechSynthesis, which speaks the exact same approved text, just with a lower-quality voice.
+export async function speakMessage(text: string): Promise<SpeakResponse> {
+  return post<SpeakResponse>('/speak', { text })
 }

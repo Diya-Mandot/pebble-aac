@@ -30,7 +30,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { expandMessage, simplifyMessage } from './api'
+import { expandMessage, simplifyMessage, speakMessage } from './api'
 import type {
   Candidate,
   ChatMessage,
@@ -171,6 +171,31 @@ function App() {
     setIsExpanding(false)
   }
 
+  const speakText = (text: string) => {
+    const speakWithBrowserVoice = () => {
+      if (!('speechSynthesis' in window)) return
+      window.speechSynthesis.cancel()
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.rate = 0.94
+      window.speechSynthesis.speak(utterance)
+    }
+
+    // Real Polly playback (Kevin, neural) when available; browser speechSynthesis is only a
+    // last-resort fallback -- it still speaks the exact approved text, just with a lower-quality
+    // voice, so falling back to it here is safe (unlike the backend's own bundled-clip fallback,
+    // which may only ever play back its one fixed sentence).
+    speakMessage(text)
+      .then((response) => {
+        if (!response.audioBase64) {
+          speakWithBrowserVoice()
+          return
+        }
+        const audio = new Audio(`data:${response.contentType};base64,${response.audioBase64}`)
+        audio.play().catch(speakWithBrowserVoice)
+      })
+      .catch(speakWithBrowserVoice)
+  }
+
   const approveCandidate = (candidate: Candidate) => {
     setMessages((current) => [
       ...current,
@@ -191,12 +216,7 @@ function App() {
     setNotice('Your message was shared with the group.')
     window.setTimeout(() => setNotice(null), 3200)
 
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel()
-      const utterance = new SpeechSynthesisUtterance(candidate.text)
-      utterance.rate = 0.94
-      window.speechSynthesis.speak(utterance)
-    }
+    speakText(candidate.text)
   }
 
   const sendPeerMessage = async () => {
