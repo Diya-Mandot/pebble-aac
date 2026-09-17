@@ -150,7 +150,10 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visi
 .incoming-card { margin: 0 0 20px; padding: 17px; border: 1px solid #bfe3dc; background: #f1fbf8; border-radius: 18px; box-shadow: var(--shadow-sm); }
 .incoming-header { display: flex; align-items: start; justify-content: space-between; gap: 10px; margin-bottom: 13px; }
 .step-list { padding: 0; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
-.step-list li { min-height: 50px; display: grid; grid-template-columns: 28px auto 1fr; gap: 10px; align-items: center; padding: 8px 11px; background: #fff; border: 1px solid #dcece9; border-radius: 13px; }
+.step-list li { padding: 0; }
+.step-row { width: 100%; min-height: 50px; display: grid; grid-template-columns: 28px auto 1fr 16px; gap: 10px; align-items: center; padding: 8px 11px; background: #fff; border: 1px solid #dcece9; border-radius: 13px; text-align: left; cursor: pointer; transition: .15s ease; }
+.step-row:hover, .step-row:focus-visible { border-color: #8cc9bd; background: #f6fdfb; }
+.step-listen-icon { color: #08766c; opacity: .55; }
 .step-number { width: 25px; height: 25px; display: grid; place-items: center; background: #d9f1ec; border-radius: 8px; color: #08766c; font-size: 11px; font-weight: 800; }
 .step-list strong { font-size: 13px; }
 .mini-icons { display: inline-flex; gap: 2px; font-size: 20px; }

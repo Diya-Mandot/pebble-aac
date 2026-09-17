@@ -541,9 +541,17 @@ function App() {
                     <ol className="step-list">
                       {session.simplified.steps.map((step, index) => (
                         <li key={`${step.label}-${index}`}>
-                          <span className="step-number">{index + 1}</span>
-                          <MiniIcons ids={step.icons} />
-                          <strong>{step.label}</strong>
+                          <button
+                            type="button"
+                            className="step-row"
+                            onClick={() => speakText(step.label)}
+                            aria-label={`Hear step ${index + 1} out loud: ${step.label}`}
+                          >
+                            <span className="step-number">{index + 1}</span>
+                            <MiniIcons ids={step.icons} />
+                            <strong>{step.label}</strong>
+                            <Volume2 className="step-listen-icon" size={16} aria-hidden="true" />
+                          </button>
                         </li>
                       ))}
                     </ol>
