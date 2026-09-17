@@ -2,11 +2,15 @@
 profiles (see ../common/dynamo.py). Matches PLAN.md's frozen API contract:
 {vocabLevel, sentenceLength, tone, interests[]}."""
 from ..common.dynamo import get_profile, put_profile
-from ..common.responses import ok, bad_request, not_found, server_error
+from ..common.origin_guard import is_trusted_origin
+from ..common.responses import ok, bad_request, forbidden, not_found, server_error
 from ..common.validation import parse_json_body, validate_profile_request
 
 
 def lambda_handler(event, context):
+    if not is_trusted_origin(event):
+        return forbidden()
+
     profile_id = (event.get("pathParameters") or {}).get("id")
     if not profile_id:
         return bad_request("Missing profile id in path")

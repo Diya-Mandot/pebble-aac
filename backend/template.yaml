@@ -1,12 +1,30 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Bridge AAC backend — /expand, /simplify, /speak, and /profile/{id}
+Description: Bridge AAC backend — /expand, /simplify, /speak, /profile/{id}, plus the CloudFront-fronted static site
+
+Parameters:
+  SiteUsername:
+    Type: String
+    Default: pebble
+  SitePassword:
+    Type: String
+    NoEcho: true
+  ApiOriginSecret:
+    Type: String
+    NoEcho: true
+    Description: >
+      Shared secret CloudFront injects on every request to the API origin; the Lambdas reject
+      anything missing/wrong via common/origin_guard.py so the raw execute-api URL can't be used
+      to bypass the CloudFront Basic-auth gate.
 
 Globals:
   Function:
     Runtime: python3.12
     Timeout: 25
     MemorySize: 128
+    Environment:
+      Variables:
+        ORIGIN_SECRET: !Ref ApiOriginSecret
 
 Resources:
   BridgeApi:
@@ -35,7 +53,7 @@ Resources:
   ExpandFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      CodeUri: .build
       Handler: src.expand.app.lambda_handler
       Environment:
         Variables:
@@ -71,7 +89,7 @@ Resources:
   SimplifyFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      CodeUri: .build
       Handler: src.simplify.app.lambda_handler
       Policies:
         - Statement:
@@ -94,7 +112,7 @@ Resources:
   SpeakFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      CodeUri: .build
       Handler: src.speak.app.lambda_handler
       Policies:
         - Statement:
@@ -115,7 +133,7 @@ Resources:
   ProfileFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      CodeUri: .build
       Handler: src.profile.app.lambda_handler
       Environment:
         Variables:
@@ -142,3 +160,118 @@ Resources:
             RestApiId: !Ref BridgeApi
             Path: /profile/{id}
             Method: post
+
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}"
+
+  SiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-site-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  GateFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "${AWS::StackName}-gate"
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Basic-auth gate + /api/* prefix strip
+        Runtime: cloudfront-js-2.0
+      FunctionCode:
+        Fn::Sub:
+          - |
+            function handler(event) {
+              var request = event.request;
+              var auth = request.headers.authorization;
+              if (!auth || auth.value !== 'Basic ${AuthToken}') {
+                return {
+                  statusCode: 401,
+                  statusDescription: 'Unauthorized',
+                  headers: { 'www-authenticate': { value: 'Basic realm="Pebble"' } }
+                };
+              }
+              if (request.uri.startsWith('/api/')) {
+                request.uri = request.uri.substring(4);
+              }
+              return request;
+            }
+          - AuthToken:
+              Fn::Base64: !Sub "${SiteUsername}:${SitePassword}"
+
+  SiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        DefaultRootObject: index.html
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+          - Id: ApiOrigin
+            DomainName: !Sub "${BridgeApi}.execute-api.${AWS::Region}.amazonaws.com"
+            OriginPath: /dev
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+            OriginCustomHeaders:
+              - HeaderName: X-Pebble-Origin
+                HeaderValue: !Ref ApiOriginSecret
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt GateFunction.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: ApiOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt GateFunction.FunctionARN
+
+Outputs:
+  SiteUrl:
+    Value: !Sub "https://${SiteDistribution.DomainName}"
+  SiteBucketName:
+    Value: !Ref SiteBucket
+  DistributionId:
+    Value: !Ref SiteDistribution
+  ApiUrl:
+    Value: !Sub "https://${BridgeApi}.execute-api.${AWS::Region}.amazonaws.com/dev"

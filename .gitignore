@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .aws-sam/
+backend/.build/
 RISHABH_TASKS.md
 node_modules/
 dist/

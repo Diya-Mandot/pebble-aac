@@ -3,11 +3,15 @@ simplification; falls back to a labeled scripted/PLEASE_REPEAT response if the l
 trusted (see ../common/bedrock.py). Matches the response contract from PLAN.md's API contract
 section."""
 from ..common.bedrock import invoke_simplify
-from ..common.responses import ok, bad_request
+from ..common.origin_guard import is_trusted_origin
+from ..common.responses import ok, bad_request, forbidden
 from ..common.validation import parse_json_body, validate_simplify_request
 
 
 def lambda_handler(event, context):
+    if not is_trusted_origin(event):
+        return forbidden()
+
     payload, error = parse_json_body(event.get("body"))
     if error:
         return bad_request(error)

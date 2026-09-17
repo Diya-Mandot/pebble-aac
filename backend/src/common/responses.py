@@ -32,5 +32,9 @@ def not_found(message: str) -> dict:
     return json_response(404, {"error": message})
 
 
+def forbidden(message: str = "Forbidden") -> dict:
+    return json_response(403, {"error": message})
+
+
 def server_error(message: str) -> dict:
     return json_response(502, {"error": message})

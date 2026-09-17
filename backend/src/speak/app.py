@@ -3,12 +3,16 @@ to the one bundled prerecorded clip if the live call can't be trusted and the re
 matches what that clip actually says, otherwise returns no audio at all rather than substituting
 the wrong words (see ../common/polly.py). Matches the response contract from PLAN.md's API
 contract section."""
+from ..common.origin_guard import is_trusted_origin
 from ..common.polly import invoke_speak
-from ..common.responses import ok, bad_request
+from ..common.responses import ok, bad_request, forbidden
 from ..common.validation import parse_json_body, validate_speak_request
 
 
 def lambda_handler(event, context):
+    if not is_trusted_origin(event):
+        return forbidden()
+
     payload, error = parse_json_body(event.get("body"))
     if error:
         return bad_request(error)
