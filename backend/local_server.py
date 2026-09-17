@@ -5,12 +5,14 @@ No third-party packages, no SAM CLI, no Docker required for this pass.
 Run: python local_server.py [port]   (default port 8000)
 """
 import json
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from src.expand.app import lambda_handler as expand_handler
 from src.simplify.app import lambda_handler as simplify_handler
 from src.speak.app import lambda_handler as speak_handler
+from src.profile.app import lambda_handler as profile_handler
 from src.common.responses import CORS_HEADERS
 
 ROUTES = {
@@ -18,6 +20,19 @@ ROUTES = {
     "/simplify": simplify_handler,
     "/speak": speak_handler,
 }
+
+PROFILE_PATH_RE = re.compile(r"^/profile/(?P<id>[^/]+)$")
+
+
+def _route(path, method):
+    """Returns (handler, path_params) or (None, {}) if nothing matches. path_params mimics API
+    Gateway's event["pathParameters"] shape for a proxied {id} path segment."""
+    if method == "POST" and path in ROUTES:
+        return ROUTES[path], {}
+    match = PROFILE_PATH_RE.match(path)
+    if match and method in ("GET", "POST"):
+        return profile_handler, {"id": match.group("id")}
+    return None, {}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -32,8 +47,8 @@ class Handler(BaseHTTPRequestHandler):
         # CORS preflight: the browser sends this before any cross-origin POST with a JSON body.
         self._send(204, CORS_HEADERS, "")
 
-    def do_POST(self):
-        handler = ROUTES.get(self.path)
+    def _dispatch(self, method):
+        handler, path_params = _route(self.path, method)
         if handler is None:
             self._send(404, CORS_HEADERS, json.dumps({"error": "Not found"}))
             return
@@ -41,21 +56,37 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         raw_body = self.rfile.read(length).decode("utf-8") if length else ""
 
-        event = {"httpMethod": "POST", "path": self.path, "body": raw_body}
+        event = {
+            "httpMethod": method,
+            "path": self.path,
+            "body": raw_body or None,
+            "pathParameters": path_params or None,
+        }
         result = handler(event, None)
 
         self._send(result["statusCode"], result["headers"], result["body"])
 
+    def do_GET(self):
+        self._dispatch("GET")
+
+    def do_POST(self):
+        self._dispatch("POST")
+
     def log_message(self, format, *args):
-        # Only method/path/status — never request bodies (icons, text, transcripts, profile ids)
-        # or client address.
-        sys.stderr.write(f"{format % args}\n")
+        # Only method/path/status — never request bodies (icons, text, transcripts) or client
+        # address. /profile/{id} embeds a dynamic, potentially-identifying id directly in the URL
+        # path (unlike /expand, /simplify, /speak, whose paths are always the same static string),
+        # and BaseHTTPRequestHandler's default log line includes the full raw request line
+        # (self.requestline) -- redact the id segment so it never reaches logs, per PLAN.md's "no
+        # ... profiles in logs" privacy rule.
+        line = re.sub(r"(/profile/)[^\s?\"]+", r"\1<id>", format % args)
+        sys.stderr.write(f"{line}\n")
 
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     server = HTTPServer(("127.0.0.1", port), Handler)
-    print(f"Serving /expand, /simplify, and /speak on http://127.0.0.1:{port}")
+    print(f"Serving /expand, /simplify, /speak, and /profile/{{id}} on http://127.0.0.1:{port}")
     server.serve_forever()
 
 

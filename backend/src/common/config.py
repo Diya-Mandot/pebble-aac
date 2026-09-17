@@ -11,6 +11,7 @@ synthesize_speech call, plus scripts/generate_speak_fallback.py's real run (see
 backend/fixtures/speak_fallback.json for the generation record). No deny-policy issue here, unlike
 Bedrock's model restrictions above.
 """
+import os
 
 AWS_REGION = "us-east-1"
 BEDROCK_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
@@ -30,3 +31,12 @@ POLLY_ENGINE = "neural"
 POLLY_OUTPUT_FORMAT = "mp3"
 POLLY_CONNECT_TIMEOUT_SECONDS = 2
 POLLY_READ_TIMEOUT_SECONDS = 8
+
+# GET/POST /profile/{id} -- table name is normally injected by template.yaml's
+# Environment.Variables (SAM-generated, since the table name isn't hardcoded); the literal default
+# here only matters for local_server.py runs without a real deployed table, where DynamoDB calls
+# will fail and every profile lookup falls back to the fixture (see common/dynamo.py).
+PROFILE_TABLE_NAME = os.environ.get("PROFILE_TABLE_NAME", "bridge-profiles-local")
+PROFILE_TTL_SECONDS = 24 * 60 * 60  # PLAN.md privacy section: "DynamoDB TTL 24h"
+DYNAMO_CONNECT_TIMEOUT_SECONDS = 2
+DYNAMO_READ_TIMEOUT_SECONDS = 3

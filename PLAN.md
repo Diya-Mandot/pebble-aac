@@ -40,19 +40,23 @@ POST /speak     {text:string} → {audioBase64:string|null, contentType:"audio/m
              # Polly; bundled prerecorded clip is the labeled fallback, but ONLY for the exact text it was recorded for.
              # audioBase64 is null (with error set) when live synthesis fails AND the requested text doesn't match the
              # bundled clip -- never plays a fallback clip that would speak different words than approved. Client: null
-             # means show the text only, never attempt playback.
+             # means fall back to the browser's own speechSynthesis for the exact same text (never the bundled clip,
+             # never different words) -- same-content, lower-quality voice, not silence. Text-only only if
+             # speechSynthesis itself is unavailable in that browser.
 GET  /profile/{id} · POST /profile/{id}             # {vocabLevel, sentenceLength, tone, interests[]}
+             # DynamoDB-backed (24h TTL, see Privacy below); GET falls back to the matching synthetic demo/demo_alt
+             # profile if nothing's been saved yet or DynamoDB is unreachable, same "hard fallback" rule as above.
 ```
 `source` labels every /expand and /simplify response so canned/mock output is never disguised as live (see "Fallbacks are labeled" above).
 Every AWS call has a hard fallback (canned JSON, labeled on screen). Model ID, region, timeout (10s), 1 retry — pin in one config file now.
 
 ## Build order (strict — do not skip ahead)
 
-1. ☐ React split screen, icon grid, typed chat — hardcoded fake responses end-to-end
-2. ☐ /expand live: icons → 3 schema-constrained candidates → **approval chooser** → text lands in chat
-3. ☐ /simplify live: typed peer message → icon steps + warnings + quick replies; PLEASE_REPEAT path
-4. ☐ /speak: Polly playback of approved message (child-appropriate neural voice — test voice/region NOW; bundle one prerecorded fallback clip)
-5. ☐ Profile toggle: 2 synthetic profiles, same icons → visibly different candidates
+1. ☑ React split screen, icon grid, typed chat — hardcoded fake responses end-to-end
+2. ☑ /expand live: icons → 3 schema-constrained candidates → **approval chooser** → text lands in chat
+3. ☑ /simplify live: typed peer message → icon steps + warnings + quick replies; PLEASE_REPEAT path
+4. ☑ /speak: Polly playback of approved message (child-appropriate neural voice — test voice/region NOW; bundle one prerecorded fallback clip)
+5. ☑ Profile toggle: 2 synthetic profiles, same icons → visibly different candidates
 6. ☐ Voice input: MediaRecorder → presigned S3 URL → batch Transcribe → poll → /simplify (+ S3 lifecycle delete)
 7. ☐ Polish only: ARASAAC swap, loading states, empty states
 

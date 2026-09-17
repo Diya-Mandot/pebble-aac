@@ -60,6 +60,41 @@ def validate_speak_request(payload: dict) -> str | None:
     return None
 
 
+MAX_PROFILE_FIELD_LENGTH = 100
+MAX_INTERESTS_COUNT = 10
+MAX_INTEREST_LENGTH = 50
+
+
+PROFILE_FIELDS = {"vocabLevel", "sentenceLength", "tone", "interests"}
+
+
+def validate_profile_request(payload: dict) -> str | None:
+    if not isinstance(payload, dict):
+        return "Request body must be a JSON object"
+    if set(payload.keys()) != PROFILE_FIELDS:
+        # Matches the exact-key-set strictness validate_simplify_response/validate_expand_candidates
+        # already use elsewhere -- an accidental/unexpected extra key (e.g. a stray "studentName")
+        # must not be stored or echoed back as if it were part of the frozen 4-field contract.
+        return f"Request body must contain exactly: {sorted(PROFILE_FIELDS)}"
+    for field in ("vocabLevel", "sentenceLength", "tone"):
+        value = payload.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return f"'{field}' is required and must be a non-empty string"
+        if len(value) > MAX_PROFILE_FIELD_LENGTH:
+            return f"'{field}' exceeds {MAX_PROFILE_FIELD_LENGTH} characters"
+    interests = payload.get("interests")
+    if not isinstance(interests, list) or len(interests) == 0:
+        return "'interests' is required and must be a non-empty array"
+    if len(interests) > MAX_INTERESTS_COUNT:
+        return f"'interests' exceeds {MAX_INTERESTS_COUNT} items"
+    for interest in interests:
+        if not isinstance(interest, str) or not interest.strip():
+            return "'interests' must contain only non-empty strings"
+        if len(interest) > MAX_INTEREST_LENGTH:
+            return f"'interests' item exceeds {MAX_INTEREST_LENGTH} characters"
+    return None
+
+
 MAX_CANDIDATE_TEXT_LENGTH = 200
 
 

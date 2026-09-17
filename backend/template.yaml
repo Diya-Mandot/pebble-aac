@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Bridge AAC backend — /expand, /simplify, and /speak
+Description: Bridge AAC backend — /expand, /simplify, /speak, and /profile/{id}
 
 Globals:
   Function:
@@ -14,15 +14,35 @@ Resources:
     Properties:
       StageName: dev
       Cors:
-        AllowMethods: "'OPTIONS,POST'"
+        AllowMethods: "'OPTIONS,POST,GET'"
         AllowHeaders: "'Content-Type'"
         AllowOrigin: "'*'"
+
+  ProfileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: profileId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: profileId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
 
   ExpandFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: .
       Handler: src.expand.app.lambda_handler
+      Environment:
+        Variables:
+          # ExpandFunction now also reads a saved profile override before falling back to the
+          # fixture (see common/dynamo.py) -- without this, PROFILE_TABLE_NAME would resolve to
+          # config.py's local-dev default, miss every lookup, and silently always use the fixture.
+          PROFILE_TABLE_NAME: !Ref ProfileTable
       Policies:
         - Statement:
             - Effect: Allow
@@ -37,6 +57,9 @@ Resources:
                 # on the foundation model in every region a cross-region profile might route to, not
                 # just the invoking region.
                 - !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt ProfileTable.Arn
       Events:
         Expand:
           Type: Api
@@ -87,4 +110,35 @@ Resources:
           Properties:
             RestApiId: !Ref BridgeApi
             Path: /speak
+            Method: post
+
+  ProfileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src.profile.app.lambda_handler
+      Environment:
+        Variables:
+          PROFILE_TABLE_NAME: !Ref ProfileTable
+      Policies:
+        # Explicit least-privilege statement rather than DynamoDBCrudPolicy, which also grants
+        # Scan/Query/UpdateItem/DeleteItem/BatchWrite that this endpoint never uses.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt ProfileTable.Arn
+      Events:
+        GetProfile:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BridgeApi
+            Path: /profile/{id}
+            Method: get
+        PutProfile:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BridgeApi
+            Path: /profile/{id}
             Method: post

@@ -26,3 +26,11 @@ def ok(body: dict, source: str = "mock") -> dict:
 
 def bad_request(message: str) -> dict:
     return json_response(400, {"error": message})
+
+
+def not_found(message: str) -> dict:
+    return json_response(404, {"error": message})
+
+
+def server_error(message: str) -> dict:
+    return json_response(502, {"error": message})

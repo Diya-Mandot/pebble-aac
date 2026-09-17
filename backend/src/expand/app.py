@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from ..common.bedrock import invoke_expand
+from ..common.dynamo import get_profile
 from ..common.responses import ok, bad_request
 from ..common.validation import parse_json_body, validate_expand_request
 
@@ -20,6 +21,19 @@ def _load_fixture():
 def _resolve_profile(fixture, profile_id):
     profiles = fixture["profiles"]
     return profiles.get(profile_id, profiles[fixture["defaultProfileId"]])
+
+
+def _resolve_live_profile_traits(fixture, profile_id):
+    """Returns (profile_traits, source). source distinguishes a real saved override ("live",
+    POST /profile/{id}) from traits that are still exactly the fixture's ("fallback") -- the
+    caller uses this to decide whether the fixture's canned scripted-demo candidates are still a
+    safe stand-in if Bedrock fails: they're only safe when the profile actually in use IS the
+    fixture's, not some saved override with different vocabLevel/tone/interests the canned strings
+    were never written for."""
+    saved, source = get_profile(profile_id)  # DynamoDB, itself already fixture-backed on miss/error
+    if saved is not None:
+        return saved, source
+    return _resolve_profile(fixture, fixture["defaultProfileId"])["profile"], "fallback"
 
 
 def _scripted_fallback_candidates(fixture, profile_id, icons, context):
@@ -43,9 +57,15 @@ def lambda_handler(event, context):
         return bad_request(error)
 
     fixture = _load_fixture()
-    profile = _resolve_profile(fixture, payload["profileId"])["profile"]
-    fallback_candidates = _scripted_fallback_candidates(
-        fixture, payload["profileId"], payload["icons"], payload["context"]
+    profile, profile_source = _resolve_live_profile_traits(fixture, payload["profileId"])
+    fallback_candidates = (
+        _scripted_fallback_candidates(
+            fixture, payload["profileId"], payload["icons"], payload["context"]
+        )
+        if profile_source == "fallback"
+        else None  # a saved DynamoDB override -- the fixture's canned strings weren't written
+        # for this profile's actual traits, so fall through to invoke_expand's own
+        # generic icon-derived fallback instead of misrepresenting the override's voice.
     )
 
     get_remaining_ms = context.get_remaining_time_in_millis if context is not None else (lambda: None)

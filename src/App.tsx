@@ -76,6 +76,14 @@ const feelings = [
   { label: 'Low energy' },
 ]
 
+// Style-labeled, not person-named -- this is one student (Maya, see the heading/avatar/message
+// author below) with different personalization settings, not two different people. Mirrors
+// backend/fixtures/expand_default.json's "demo"/"demo_alt" profiles 1:1.
+const PROFILES = [
+  { id: 'demo', label: 'Simple & direct', traits: 'Short sentences · likes making things' },
+  { id: 'demo_alt', label: 'Curious & exploring', traits: 'Developing wording · likes science & puzzles' },
+]
+
 const initialMessages: ChatMessage[] = [
   {
     id: 'welcome',
@@ -134,6 +142,7 @@ function App() {
   const [selectedIcons, setSelectedIcons] = useState<IconId[]>([])
   const [context, setContext] = useState(contexts[0].value)
   const [feeling, setFeeling] = useState(feelings[0].label)
+  const [profileId, setProfileId] = useState(PROFILES[0].id)
   const [candidates, setCandidates] = useState<Candidate[]>([])
   const [candidateSource, setCandidateSource] = useState<ResponseSource | null>(null)
   const [expanded, setExpanded] = useState(false)
@@ -147,12 +156,23 @@ function App() {
   const [activeMobilePanel, setActiveMobilePanel] = useState<'student' | 'group'>('student')
   const composerRef = useRef<HTMLTextAreaElement>(null)
 
+  // Guards against a pending /expand response landing after the state it was requested for has
+  // already changed (icon edits, profile switch, context change, or Reset while a request is in
+  // flight) -- invalidating bumps the id and clears the loading state immediately, so a stale
+  // response arriving later is a no-op instead of repopulating candidates for state that's gone.
+  const requestIdRef = useRef(0)
+  const invalidatePendingRequest = () => {
+    requestIdRef.current += 1
+    setIsExpanding(false)
+  }
+
   const selectedDefinitions = useMemo(
     () => selectedIcons.map((id) => iconById(id)),
     [selectedIcons],
   )
 
   const toggleIcon = (id: IconId) => {
+    invalidatePendingRequest()
     setCandidates([])
     setCandidateSource(null)
     setSelectedIcons((current) => {
@@ -161,14 +181,31 @@ function App() {
     })
   }
 
+  const switchProfile = (id: string) => {
+    invalidatePendingRequest()
+    setCandidates([])
+    setCandidateSource(null)
+    setProfileId(id)
+  }
+
+  const changeContext = (value: string) => {
+    invalidatePendingRequest()
+    setCandidates([])
+    setCandidateSource(null)
+    setContext(value)
+  }
+
   const makeMessage = async () => {
     if (!selectedIcons.length) return
+    invalidatePendingRequest()
+    const requestId = requestIdRef.current
     setIsExpanding(true)
     setCandidates([])
-    const response = await expandMessage(selectedIcons, context)
+    const response = await expandMessage(selectedIcons, context, profileId)
+    if (requestIdRef.current !== requestId) return // superseded; loading state already handled at invalidation time
+    setIsExpanding(false)
     setCandidates(response.candidates)
     setCandidateSource(response.source)
-    setIsExpanding(false)
   }
 
   const speakText = (text: string) => {
@@ -259,6 +296,7 @@ function App() {
   }
 
   const resetDemo = () => {
+    invalidatePendingRequest()
     setSelectedIcons([])
     setCandidates([])
     setCandidateSource(null)
@@ -267,6 +305,7 @@ function App() {
     setPeerText('')
     setFeeling(feelings[0].label)
     setContext(contexts[0].value)
+    setProfileId(PROFILES[0].id)
     setActiveMobilePanel('student')
   }
 
@@ -397,12 +436,29 @@ function App() {
               <label>
                 <span>We’re working on</span>
                 <div className="select-wrap">
-                  <select value={context} onChange={(event) => setContext(event.target.value)}>
+                  <select value={context} onChange={(event) => changeContext(event.target.value)}>
                     {contexts.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                   </select>
                   <ChevronDown size={17} />
                 </div>
               </label>
+              <fieldset className="profile-toggle-row">
+                <legend>Talking style</legend>
+                <div className="profile-toggle" role="group" aria-label="Talking style">
+                  {PROFILES.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={profileId === item.id ? 'active' : ''}
+                      aria-pressed={profileId === item.id}
+                      onClick={() => switchProfile(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <small className="profile-traits">{PROFILES.find((item) => item.id === profileId)?.traits}</small>
+              </fieldset>
               <label>
                 <span>I’m feeling</span>
                 <div className="select-wrap">
@@ -459,7 +515,16 @@ function App() {
                       </button>
                     ))}
                   </div>
-                  <button className="clear-button" onClick={() => setSelectedIcons([])} aria-label="Clear all selections"><Trash2 size={17} /></button>
+                  <button
+                    className="clear-button"
+                    onClick={() => {
+                      invalidatePendingRequest()
+                      setCandidates([])
+                      setCandidateSource(null)
+                      setSelectedIcons([])
+                    }}
+                    aria-label="Clear all selections"
+                  ><Trash2 size={17} /></button>
                 </>
               ) : (
                 <span className="tray-placeholder"><MousePointerClick size={17} /> Tap a card to begin your message</span>

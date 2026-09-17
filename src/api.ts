@@ -1,15 +1,44 @@
-import type { ExpandResponse, IconId, SimplifyResponse, SpeakResponse } from './types'
+import type { Candidate, ExpandResponse, IconId, SimplifyResponse, SpeakResponse } from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
-const expandFallback: ExpandResponse = {
-  candidates: [
-    { id: 'local-1', text: "I'm confused about building this. Can you help?" },
-    { id: 'local-2', text: "I'm stuck on this part. Could we work through it together?" },
-    { id: 'local-3', text: 'Can someone show me the first step for building this?' },
+// Small local label map, not imported from App.tsx's ICONS/iconById -- App.tsx already imports
+// expandMessage etc. from this module, so pulling iconById back in the other direction would be
+// an import cycle. Kept minimal (labels only, no lucide icon components).
+const ICON_LABELS: Record<IconId, string> = {
+  CONFUSED: 'confused', IDEA: 'i have an idea', BUILD: 'build', HELP: 'help', AGREE: 'i agree',
+  DISAGREE: 'i disagree', QUESTION: 'question', STOP: 'stop', CHECK: 'check', DONE: "i'm done",
+}
+
+// Matches backend/fixtures/expand_default.json's scripted "request" -- only that exact icon
+// sequence + context is safe to answer with the canned demo strings below (mirrors expand/app.py's
+// _scripted_fallback_candidates, which does the same exact-order comparison on the backend).
+const SCRIPTED_ICONS: IconId[] = ['CONFUSED', 'BUILD', 'HELP']
+const SCRIPTED_CONTEXT = 'classroom group project'
+
+// Mirrors expand_default.json's two profiles' canned candidates, so this fully-offline fallback
+// (only reached when fetch itself throws, e.g. the backend is unreachable) still shows visibly
+// different text per profile, same as the backend's own no-AWS-creds fallback already does.
+const scriptedFallbackByProfile: Record<string, Candidate[]> = {
+  demo: [
+    { id: 'c1', text: "I'm confused about building this. Can you help?" },
+    { id: 'c2', text: "I don't understand this part. Please help me build it." },
+    { id: 'c3', text: 'How do I build this? I need help.' },
   ],
-  source: 'fallback',
-  error: 'The live service is unavailable. Showing the recorded demo fallback.',
+  demo_alt: [
+    { id: 'c1', text: "I'm not sure how to build this. Could we work through it together?" },
+    { id: 'c2', text: 'This build is confusing me. Can someone explain how to approach it?' },
+    { id: 'c3', text: 'I need some help understanding how this goes together.' },
+  ],
+}
+
+const genericFallback = (icons: IconId[]): Candidate[] => {
+  const words = icons.map((id) => ICON_LABELS[id]).join(', ')
+  return [
+    { id: 'c1', text: `I want to say: ${words}.` },
+    { id: 'c2', text: `Can we talk about ${words}?` },
+    { id: 'c3', text: `I'm trying to communicate: ${words}.` },
+  ]
 }
 
 const simplifyFallback = (text: string): SimplifyResponse => {
@@ -55,11 +84,20 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export async function expandMessage(icons: IconId[], context: string): Promise<ExpandResponse> {
+export async function expandMessage(icons: IconId[], context: string, profileId: string): Promise<ExpandResponse> {
   try {
-    return await post<ExpandResponse>('/expand', { icons, context, profileId: 'demo' })
+    return await post<ExpandResponse>('/expand', { icons, context, profileId })
   } catch {
-    return expandFallback
+    // Exact order, not membership -- mirrors expand/app.py's _scripted_fallback_candidates
+    // (`request["icons"] != list(icons)`), so a reordered selection like HELP+BUILD+CONFUSED
+    // correctly falls through to the generic fallback instead of matching the scripted
+    // CONFUSED+BUILD+HELP demo response it wasn't recorded for.
+    const isScripted = context === SCRIPTED_CONTEXT && icons.length === SCRIPTED_ICONS.length
+      && icons.every((id, index) => id === SCRIPTED_ICONS[index])
+    const candidates = isScripted
+      ? (scriptedFallbackByProfile[profileId] ?? scriptedFallbackByProfile.demo)
+      : genericFallback(icons)
+    return { candidates, source: 'fallback', error: 'The live service is unavailable. Showing a demo fallback.' }
   }
 }
 

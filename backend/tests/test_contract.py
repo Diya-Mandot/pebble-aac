@@ -112,6 +112,15 @@ class ExpandContractTest(unittest.TestCase):
     # fixture's canned candidates rather than the generic deterministic fallback.
     SCRIPTED_CONTEXT = "classroom group project"
 
+    def setUp(self):
+        # expand/app.py now also consults DynamoDB (via common/dynamo.get_profile) for a saved
+        # profile override before falling back to the fixture. Default every test in this class to
+        # "no saved override" (matching pre-DynamoDB behavior) unless a test explicitly overrides
+        # this mock -- otherwise these tests would attempt a real, unmocked boto3 DynamoDB call.
+        patcher = patch("src.expand.app.get_profile", return_value=(None, "fallback"))
+        self.mock_get_profile = patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _event(self, icons=("CONFUSED", "BUILD", "HELP"), context="", profile_id="demo"):
         return {
             "body": json.dumps(
@@ -261,6 +270,47 @@ class ExpandContractTest(unittest.TestCase):
         }
         result = expand_handler(event, None)
         self.assertEqual(result["statusCode"], 400)
+
+    @patch("src.common.bedrock.get_client")
+    def test_saved_dynamodb_profile_traits_reach_the_bedrock_prompt(self, mock_get_client):
+        self.mock_get_profile.return_value = (
+            {"vocabLevel": "advanced", "sentenceLength": "long", "tone": "playful", "interests": ["dinosaurs"]},
+            "live",
+        )
+        mock_client = MagicMock()
+        mock_client.converse.return_value = _tool_use_response(VALID_CANDIDATES)
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(self._event(), None)
+        self.assertEqual(result["statusCode"], 200)
+
+        prompt_text = mock_client.converse.call_args.kwargs["messages"][0]["content"][0]["text"]
+        self.assertIn("dinosaurs", prompt_text)
+        self.assertIn("playful", prompt_text)
+
+    @patch("src.common.bedrock.get_client")
+    def test_saved_profile_override_skips_stale_fixture_fallback_on_bedrock_failure(self, mock_get_client):
+        # A saved DynamoDB override changes what "demo" actually is -- if Bedrock then fails on the
+        # exact scripted demo request, the fixture's canned "demo" candidates (written for the
+        # original simple/direct traits) would misrepresent the overridden profile's actual voice.
+        # Must fall through to the generic icon-derived fallback instead.
+        self.mock_get_profile.return_value = (
+            {"vocabLevel": "advanced", "sentenceLength": "long", "tone": "playful", "interests": ["dinosaurs"]},
+            "live",
+        )
+        mock_client = MagicMock()
+        mock_client.converse.side_effect = _client_error("ThrottlingException")
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(self._event(context=self.SCRIPTED_CONTEXT, profile_id="demo"), None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "fallback")
+
+        fixture = json.loads(EXPAND_FIXTURE_PATH.read_text(encoding="utf-8"))
+        scripted = fixture["profiles"]["demo"]["response"]["candidates"]
+        self.assertNotEqual(body["candidates"], scripted)
+        for candidate in body["candidates"]:
+            self.assertIn("confused, build, help", candidate["text"].lower())
 
 
 class SimplifyContractTest(unittest.TestCase):
