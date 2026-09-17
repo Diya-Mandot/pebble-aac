@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   BadgeCheck,
@@ -18,27 +18,28 @@ import {
   Puzzle,
   RotateCcw,
   ScanSearch,
-  Send,
   Shell,
   Sun,
   Sparkles,
   ThumbsDown,
   ThumbsUp,
   Trash2,
-  Users,
   Volume2,
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { expandMessage, simplifyMessage, speakMessage } from './api'
+import { expandMessage, fetchContextUpdate, simplifyMessage, speakMessage } from './api'
 import type {
   Candidate,
-  ChatMessage,
+  DynamicIconSlot,
+  FlaggedMoment,
   IconId,
   QuickReplyId,
   ResponseSource,
   SimplifyResponse,
 } from './types'
+import { emitTurn, onTurn } from './turnEmitter'
+import { ConversationBuffer } from './conversationBuffer'
 
 type IconDefinition = {
   id: IconId
@@ -84,25 +85,14 @@ const PROFILES = [
   { id: 'demo_alt', label: 'Curious & exploring', traits: 'Developing wording · likes science & puzzles' },
 ]
 
-const initialMessages: ChatMessage[] = [
-  {
-    id: 'welcome',
-    sender: 'system',
-    author: 'Pebble',
-    text: 'Science team is ready. Take your time—everyone gets a turn.',
-    time: 'Now',
-  },
-  {
-    id: 'peer-welcome',
-    sender: 'peer',
-    author: 'Jordan',
-    text: "Let's figure out the circuit together. What should we try first?",
-    time: '10:24 AM',
-  },
-]
+// Slot count is fixed (design rule: the dynamic row's slot positions never move, only their
+// labels). Track D's dynamicIcons list is at most 6 items, most-relevant first -- mapped directly
+// onto these positions, padded with nulls for any unfilled slot.
+const DYNAMIC_ICON_SLOT_COUNT = 6
+const EMPTY_DYNAMIC_ICONS: (DynamicIconSlot | null)[] = Array(DYNAMIC_ICON_SLOT_COUNT).fill(null)
 
-const timeNow = () =>
-  new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit' }).format(new Date())
+const toDynamicSlots = (icons: DynamicIconSlot[]): (DynamicIconSlot | null)[] =>
+  Array.from({ length: DYNAMIC_ICON_SLOT_COUNT }, (_, index) => icons[index] ?? null)
 
 const iconById = (id: IconId) => ICONS.find((item) => item.id === id) ?? ICONS[6]
 
@@ -138,6 +128,26 @@ function MiniIcons({ ids }: { ids: IconId[] }) {
   )
 }
 
+// Dumb presentational component -- slot content is swappable (fake data now, Track D's response
+// once Track E wires it up). Position/count of slots is fixed; only the word in each slot changes.
+// Keying each tile by its slot index + word makes React remount only the tile whose word actually
+// changed, so the CSS mount animation naturally pulses just that tile instead of the whole row.
+function DynamicIconRow({ slots }: { slots: (DynamicIconSlot | null)[] }) {
+  return (
+    <div className="dynamic-row" role="list" aria-label="Words from the conversation">
+      {slots.map((slot, index) => (
+        <div
+          className={`dynamic-tile ${slot ? 'filled' : 'empty'}`}
+          role="listitem"
+          key={`${index}-${slot?.word ?? 'empty'}`}
+        >
+          {slot ? <strong>{slot.word}</strong> : <span className="dynamic-tile-placeholder" aria-hidden="true" />}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function App() {
   const [selectedIcons, setSelectedIcons] = useState<IconId[]>([])
   const [context, setContext] = useState(contexts[0].value)
@@ -147,63 +157,58 @@ function App() {
   const [candidateSource, setCandidateSource] = useState<ResponseSource | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [isExpanding, setIsExpanding] = useState(false)
-  const [peerText, setPeerText] = useState('')
+  // Interim (not-yet-final) speech text, shown next to the mic as a live caption only -- it's
+  // never sent anywhere; each finalized chunk is what actually drives simplify/context below.
+  const [liveCaption, setLiveCaption] = useState('')
   const [isSimplifying, setIsSimplifying] = useState(false)
   const [simplified, setSimplified] = useState<SimplifyResponse | null>(null)
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
   const [notice, setNotice] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
+  const [dynamicIcons, setDynamicIcons] = useState<(DynamicIconSlot | null)[]>(EMPTY_DYNAMIC_ICONS)
+  // Usually null -- Track D's flaggedMoment is omitted whenever the call is ambiguous, and even
+  // when present it's only ever surfaced through the human-triggered button below (design rule:
+  // receptive help is never auto-pushed).
+  const [flaggedMoment, setFlaggedMoment] = useState<FlaggedMoment | null>(null)
+  const [showFlaggedMoment, setShowFlaggedMoment] = useState(false)
+  const conversationBufferRef = useRef(new ConversationBuffer())
+  const lastApprovedMessageRef = useRef<string | null>(null)
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const [activeMobilePanel, setActiveMobilePanel] = useState<'student' | 'group'>('student')
-  const composerRef = useRef<HTMLTextAreaElement>(null)
-  const workspaceRef = useRef<HTMLElement>(null)
-  const resizingRef = useRef(false)
+  // True whenever the student wants the session-scoped listening to keep going -- distinguishes an
+  // explicit stop from the browser's forced onend (Web Speech API drops the connection ~every 60s),
+  // so onend knows whether to auto-restart or actually end the session.
+  const wantsListeningRef = useRef(false)
+  // Guards against overlapping /simplify calls from the recognition callback (a stable closure that
+  // can't read fresh state) -- set alongside isSimplifying so both the gate and the UI stay in sync.
+  const isSimplifyingRef = useRef(false)
 
-  const CHAT_MIN_WIDTH_PX = 360
-  const CHAT_MAX_WIDTH_PCT = 50
-  const [chatWidthPct, setChatWidthPct] = useState(46)
+  // Wires Track A's continuous-listening turns into Track B's buffer, and -- only when its
+  // debounce/topic-shift gate actually fires -- into Track D's live endpoint. Re-subscribes when
+  // `context` (the activity anchor) changes so a fresh request always carries the current anchor;
+  // it doesn't reset the buffer itself, since switching the anchor mid-conversation shouldn't
+  // throw away turns already captured.
+  useEffect(() => {
+    const unsubscribe = onTurn((turn) => {
+      const buffer = conversationBufferRef.current
+      buffer.addTurn(turn)
+      const payload = buffer.maybeRequestRefresh(context, lastApprovedMessageRef.current)
+      if (!payload) return
 
-  const clampChatWidthPct = (pct: number, containerWidth: number) => {
-    const minPct = containerWidth ? (CHAT_MIN_WIDTH_PX / containerWidth) * 100 : 0
-    return Math.min(CHAT_MAX_WIDTH_PCT, Math.max(minPct, pct))
-  }
-
-  const updateChatWidthFromPointer = (clientX: number) => {
-    const rect = workspaceRef.current?.getBoundingClientRect()
-    if (!rect || !rect.width) return
-    const distanceFromRight = rect.right - clientX
-    const pct = (distanceFromRight / rect.width) * 100
-    setChatWidthPct(clampChatWidthPct(pct, rect.width))
-  }
-
-  const handleResizerPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    resizingRef.current = true
-    event.currentTarget.setPointerCapture(event.pointerId)
-    event.currentTarget.classList.add('active')
-  }
-
-  const handleResizerPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!resizingRef.current) return
-    updateChatWidthFromPointer(event.clientX)
-  }
-
-  const handleResizerPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    resizingRef.current = false
-    event.currentTarget.classList.remove('active')
-  }
-
-  const handleResizerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    const rect = workspaceRef.current?.getBoundingClientRect()
-    if (!rect || !rect.width) return
-    const step = 2
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      event.preventDefault()
-      const direction = event.key === 'ArrowLeft' ? 1 : -1
-      setChatWidthPct((current) => clampChatWidthPct(current + direction * step, rect.width))
-    }
-  }
+      fetchContextUpdate({
+        summary: payload.summary,
+        rawWindow: payload.rawWindow,
+        activityAnchor: payload.activityAnchor,
+      })
+        .then((response) => {
+          setDynamicIcons(toDynamicSlots(response.dynamicIcons))
+          setFlaggedMoment(response.flaggedMoment ?? null)
+        })
+        .catch(() => {
+          // Never guess: a failed call just means no update this cycle, not a fabricated one.
+        })
+    })
+    return unsubscribe
+  }, [context])
 
   // Guards against a pending /expand response landing after the state it was requested for has
   // already changed (icon edits, profile switch, context change, or Reset while a request is in
@@ -283,38 +288,37 @@ function App() {
   }
 
   const approveCandidate = (candidate: Candidate) => {
-    setMessages((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        sender: 'student',
-        author: 'Maya',
-        text: candidate.text,
-        time: timeNow(),
-        source: candidateSource ?? undefined,
-        expandedFrom: [...selectedIcons],
-      },
-    ])
+    lastApprovedMessageRef.current = candidate.text
     setSelectedIcons([])
     setCandidates([])
     setCandidateSource(null)
-    setActiveMobilePanel('group')
-    setNotice('Your message was shared with the group.')
+    setNotice('Your message was spoken aloud.')
     window.setTimeout(() => setNotice(null), 3200)
 
     speakText(candidate.text)
   }
 
-  const toggleVoiceInput = () => {
-    if (isListening) {
-      recognitionRef.current?.stop()
-      return
-    }
+  // Runs /simplify against one finalized utterance from the room -- this is what the "Following
+  // along" card below now depends on, replacing the old typed-and-sent composer flow entirely.
+  // Guarded by a ref (not the isSimplifying state) because this is called from inside the
+  // recognition.onresult closure, which doesn't get fresh state across renders.
+  const runSimplifyForTurn = async (text: string) => {
+    if (isSimplifyingRef.current) return
+    isSimplifyingRef.current = true
+    setIsSimplifying(true)
+    setLiveCaption('')
+    const response = await simplifyMessage(text)
+    setSimplified(response)
+    setIsSimplifying(false)
+    isSimplifyingRef.current = false
+  }
 
+  const startRecognition = () => {
     const SpeechRecognitionCtor = window.SpeechRecognition ?? window.webkitSpeechRecognition
     if (!SpeechRecognitionCtor) {
-      setNotice('Voice input needs Chrome or Edge. Type your message for now.')
+      setNotice('Voice input needs Chrome or Edge.')
       window.setTimeout(() => setNotice(null), 3200)
+      wantsListeningRef.current = false
       return
     }
 
@@ -322,26 +326,39 @@ function App() {
     recognition.lang = 'en-US'
     recognition.continuous = true
     recognition.interimResults = true
-    let finalText = ''
 
     recognition.onresult = (event) => {
       let interim = ''
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const chunk = event.results[i][0].transcript
-        if (event.results[i].isFinal) finalText += `${chunk} `
-        else interim += chunk
+        if (event.results[i].isFinal) {
+          const text = chunk.trim()
+          if (text) {
+            emitTurn({ text, timestamp: Date.now() })
+            void runSimplifyForTurn(text)
+          }
+        } else {
+          interim += chunk
+        }
       }
-      setPeerText(`${finalText}${interim}`.trim())
+      setLiveCaption(interim.trim())
     }
 
     recognition.onerror = () => {
-      setNotice("Didn't catch that. Try again or type your message.")
+      setNotice("Didn't catch that. Keep listening or try again.")
       window.setTimeout(() => setNotice(null), 3200)
     }
 
+    // The browser forces onend roughly every 60s even mid-session. If the student never asked to
+    // stop, treat this as a transparent hiccup and restart immediately rather than ending the
+    // listening session and requiring another click.
     recognition.onend = () => {
-      setIsListening(false)
       recognitionRef.current = null
+      if (wantsListeningRef.current) {
+        startRecognition()
+        return
+      }
+      setIsListening(false)
     }
 
     recognitionRef.current = recognition
@@ -349,44 +366,22 @@ function App() {
     recognition.start()
   }
 
-  const sendPeerMessage = async () => {
-    const text = peerText.trim()
-    if (!text || isSimplifying) return
+  const toggleVoiceInput = () => {
+    if (isListening) {
+      wantsListeningRef.current = false
+      recognitionRef.current?.stop()
+      return
+    }
 
-    recognitionRef.current?.stop()
-
-    setMessages((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        sender: 'peer',
-        author: 'Jordan',
-        text,
-        time: timeNow(),
-      },
-    ])
-    setPeerText('')
-    setIsSimplifying(true)
-    setActiveMobilePanel('student')
-    const response = await simplifyMessage(text)
-    setSimplified(response)
-    setIsSimplifying(false)
+    setLiveCaption('')
+    wantsListeningRef.current = true
+    startRecognition()
   }
 
   const sendQuickReply = (reply: QuickReplyId) => {
     const text = reply === 'DONE' ? "I'm done!" : 'I still need some help.'
-    setMessages((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        sender: 'student',
-        author: 'Maya',
-        text,
-        time: timeNow(),
-      },
-    ])
-    setNotice('Your reply was shared.')
-    setActiveMobilePanel('group')
+    speakText(text)
+    setNotice('Your reply was spoken aloud.')
     window.setTimeout(() => setNotice(null), 2800)
   }
 
@@ -396,12 +391,15 @@ function App() {
     setCandidates([])
     setCandidateSource(null)
     setSimplified(null)
-    setMessages(initialMessages)
-    setPeerText('')
+    setLiveCaption('')
     setFeeling(feelings[0].label)
     setContext(contexts[0].value)
     setProfileId(PROFILES[0].id)
-    setActiveMobilePanel('student')
+    setDynamicIcons(EMPTY_DYNAMIC_ICONS)
+    setFlaggedMoment(null)
+    setShowFlaggedMoment(false)
+    conversationBufferRef.current = new ConversationBuffer()
+    lastApprovedMessageRef.current = null
   }
 
   return (
@@ -434,19 +432,10 @@ function App() {
         </div>
       </header>
 
-      <nav className="mobile-switcher" aria-label="Switch workspace">
-        <button className={activeMobilePanel === 'student' ? 'active' : ''} onClick={() => setActiveMobilePanel('student')}>
-          <MessageCircleHeart size={18} /> My voice
-        </button>
-        <button className={activeMobilePanel === 'group' ? 'active' : ''} onClick={() => setActiveMobilePanel('group')}>
-          <Users size={18} /> Group chat
-        </button>
-      </nav>
-
-      <main className="workspace" ref={workspaceRef}>
+      <main className="workspace">
         <section
           id="student-workspace"
-          className={`panel student-panel ${activeMobilePanel === 'student' ? 'mobile-active' : ''}`}
+          className="panel student-panel mobile-active"
           aria-labelledby="student-title"
         >
           <div className="sand-decor" aria-hidden="true">
@@ -463,10 +452,53 @@ function App() {
                 <h1 id="student-title">Maya’s voice</h1>
               </div>
             </div>
-            <div className="take-time"><Clock3 size={15} /> Take your time</div>
+            <div className="heading-actions">
+              <button
+                type="button"
+                className="help-understand-button"
+                aria-pressed={showFlaggedMoment}
+                onClick={() => setShowFlaggedMoment((value) => !value)}
+              >
+                <HandHelping size={15} /> <span>Help Maya understand</span>
+              </button>
+              <div className="take-time"><Clock3 size={15} /> Take your time</div>
+            </div>
           </div>
 
           <div className="student-scroll">
+            <section className="listening-control" aria-label="Ambient listening">
+              <button
+                className={`mic-button ${isListening ? 'listening' : ''}`}
+                type="button"
+                onClick={toggleVoiceInput}
+                aria-pressed={isListening}
+                aria-label={isListening ? 'Stop listening' : 'Start listening'}
+              >
+                <Mic size={22} />
+              </button>
+              <div className="listening-status">
+                <strong>{isListening ? 'Listening…' : 'Not listening'}</strong>
+                <span>
+                  {isListening
+                    ? liveCaption || 'Following the conversation…'
+                    : 'Turn on the mic to follow along and get help understanding.'}
+                </span>
+              </div>
+            </section>
+
+            {showFlaggedMoment && (
+              <div className="flagged-moment-card" role="status">
+                {flaggedMoment ? (
+                  <>
+                    <MiniIcons ids={flaggedMoment.icons} />
+                    <span><small>Might need your attention</small><strong>{flaggedMoment.label}</strong></span>
+                  </>
+                ) : (
+                  <span className="flagged-moment-empty">Nothing flagged in the conversation right now.</span>
+                )}
+              </div>
+            )}
+
             {(isSimplifying || simplified) && (
               <section className="incoming-card" aria-live="polite" aria-busy={isSimplifying}>
                 {isSimplifying ? (
@@ -480,7 +512,7 @@ function App() {
                     <div>
                       <span className="eyebrow">Let’s try that again</span>
                       <h2>I didn’t catch enough to be sure.</h2>
-                      <p>Ask your teammate to say it another way.</p>
+                      <p>Ask them to say it another way.</p>
                       {simplified.source && <SourcePill source={simplified.source} />}
                     </div>
                   </div>
@@ -488,7 +520,7 @@ function App() {
                   <>
                     <div className="incoming-header">
                       <div>
-                        <span className="eyebrow">Jordan shared a plan</span>
+                        <span className="eyebrow">From the conversation</span>
                         <h2>Here’s what to do</h2>
                       </div>
                       <SourcePill source={simplified.source} />
@@ -519,7 +551,7 @@ function App() {
                       </div>
                     </div>
                     <button className="transcript-toggle" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
-                      <ChevronDown size={17} /> {expanded ? 'Hide' : 'Show'} exactly what Jordan said
+                      <ChevronDown size={17} /> {expanded ? 'Hide' : 'Show'} exactly what was said
                     </button>
                     {expanded && <blockquote className="transcript">“{simplified.transcript}”</blockquote>}
                   </>
@@ -596,6 +628,16 @@ function App() {
                 })}
               </div>
             </section>
+
+            <section className="dynamic-row-section" aria-labelledby="dynamic-row-title">
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">Following along</span>
+                  <h2 id="dynamic-row-title">Words from the conversation</h2>
+                </div>
+              </div>
+              <DynamicIconRow slots={dynamicIcons} />
+            </section>
           </div>
 
           <div className="student-composer">
@@ -669,126 +711,6 @@ function App() {
               </section>
             </div>
           )}
-        </section>
-
-        <div
-          className="panel-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize chat panel"
-          aria-valuenow={Math.round(chatWidthPct)}
-          aria-valuemin={0}
-          aria-valuemax={CHAT_MAX_WIDTH_PCT}
-          tabIndex={0}
-          onPointerDown={handleResizerPointerDown}
-          onPointerMove={handleResizerPointerMove}
-          onPointerUp={handleResizerPointerUp}
-          onPointerCancel={handleResizerPointerUp}
-          onKeyDown={handleResizerKeyDown}
-        />
-
-        <section
-          className={`panel group-panel ${activeMobilePanel === 'group' ? 'mobile-active' : ''}`}
-          aria-labelledby="group-title"
-          style={{ flexBasis: `${chatWidthPct}%` }}
-        >
-          <div className="ocean-decor" aria-hidden="true">
-            <svg className="ocean-wave ocean-wave-back" viewBox="0 0 600 90" preserveAspectRatio="none">
-              <path d="M0 42 C75 8 125 76 205 40 C285 4 340 78 425 40 C505 5 550 60 600 36 V90 H0 Z" />
-            </svg>
-            <svg className="ocean-wave ocean-wave-front" viewBox="0 0 600 90" preserveAspectRatio="none">
-              <path d="M0 48 C72 78 130 14 210 50 C290 84 350 10 430 48 C510 82 558 22 600 45 V90 H0 Z" />
-            </svg>
-            <span className="ocean-bubble bubble-one" />
-            <span className="ocean-bubble bubble-two" />
-            <span className="ocean-bubble bubble-three" />
-          </div>
-          <div className="panel-heading group-heading">
-            <div className="person-block">
-              <div className="avatar group-avatar" aria-hidden="true"><Users size={20} /></div>
-              <div>
-                <span className="eyebrow">Shared conversation</span>
-                <h2 id="group-title">Science team</h2>
-              </div>
-            </div>
-            <div className="group-faces" aria-label="Maya, Jordan, and two classmates are here">
-              <span className="face face-one">M</span><span className="face face-two">J</span><span className="face face-three">A</span><span className="face-count">+1</span>
-            </div>
-          </div>
-
-          <div className="chat-feed" aria-live="polite">
-            <div className="day-divider"><span>Today · Science Lab</span></div>
-            {messages.map((message) =>
-              message.sender === 'system' ? (
-                <div className="system-message" key={message.id}><Sparkles size={15} /><span>{message.text}</span></div>
-              ) : (
-                <article className={`chat-row ${message.sender}`} key={message.id}>
-                  <div className={`message-avatar ${message.sender === 'student' ? 'student-message-avatar' : ''}`} aria-hidden="true">
-                    {message.author.charAt(0)}
-                  </div>
-                  <div className="message-stack">
-                    <div className="message-meta"><strong>{message.author}</strong><time>{message.time}</time></div>
-                    {message.expandedFrom && (
-                      <div className="expansion-badge">
-                        <Sparkles size={12} />
-                        <span>Expanded from AAC:</span>
-                        {message.expandedFrom.map((id) => (
-                          <span className="expansion-token" key={id}>
-                            <AacIcon id={id} size={12} /> {iconById(id).label}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <div className="message-bubble"><span>{message.text}</span></div>
-                    {message.sender === 'student' && (
-                      <div className="message-foot">
-                        <span className="spoken-label"><Volume2 size={13} /> Spoken aloud</span>
-                        {message.source && <SourcePill source={message.source} />}
-                      </div>
-                    )}
-                  </div>
-                </article>
-              ),
-            )}
-          </div>
-
-          <div className="peer-composer">
-            <div className="composer-tip"><MessageCircleHeart size={15} /><span>Keep it clear, kind, and one step at a time.</span></div>
-            <div className="composer-box">
-              <textarea
-                ref={composerRef}
-                value={peerText}
-                onChange={(event) => setPeerText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault()
-                    void sendPeerMessage()
-                  }
-                }}
-                placeholder="Type a message to the group…"
-                rows={2}
-                aria-label="Message the group"
-              />
-              <div className="composer-actions">
-                <div className="mic-wrap">
-                  <button
-                    className={`mic-button ${isListening ? 'listening' : ''}`}
-                    type="button"
-                    onClick={toggleVoiceInput}
-                    aria-pressed={isListening}
-                    aria-label={isListening ? 'Stop voice input' : 'Speak your message'}
-                  >
-                    <Mic size={19} />
-                  </button>
-                  <span>{isListening ? 'Listening…' : 'Speak'}</span>
-                </div>
-                <button className="send-button" onClick={sendPeerMessage} disabled={!peerText.trim() || isSimplifying}>
-                  <span>{isSimplifying ? 'Sending…' : 'Send'}</span><Send size={18} />
-                </button>
-              </div>
-            </div>
-            <p className="composer-hint">Press Enter to send · Shift + Enter for a new line</p>
-          </div>
         </section>
       </main>
 

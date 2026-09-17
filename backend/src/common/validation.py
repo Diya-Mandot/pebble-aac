@@ -131,6 +131,104 @@ def validate_expand_candidates(candidates) -> str | None:
     return None
 
 
+MAX_RAW_WINDOW_TURNS = 8
+MAX_TURN_TEXT_LENGTH = 500
+MAX_SUMMARY_LENGTH = 1000
+MAX_ACTIVITY_ANCHOR_LENGTH = 200
+
+
+def validate_context_request(payload: dict) -> str | None:
+    if not isinstance(payload, dict):
+        return "Request body must be a JSON object"
+
+    summary = payload.get("summary")
+    if not isinstance(summary, str):
+        return "'summary' is required and must be a string (may be empty)"
+    if len(summary) > MAX_SUMMARY_LENGTH:
+        return f"'summary' exceeds {MAX_SUMMARY_LENGTH} characters"
+
+    raw_window = payload.get("rawWindow")
+    if not isinstance(raw_window, list) or len(raw_window) == 0:
+        return "'rawWindow' is required and must be a non-empty array"
+    if len(raw_window) > MAX_RAW_WINDOW_TURNS:
+        return f"'rawWindow' exceeds {MAX_RAW_WINDOW_TURNS} turns"
+    for turn in raw_window:
+        if not isinstance(turn, dict) or set(turn.keys()) != {"text", "timestamp"}:
+            return "Each 'rawWindow' item must be an object with exactly 'text' and 'timestamp' keys"
+        text = turn["text"]
+        if not isinstance(text, str) or not text.strip():
+            return "Each 'rawWindow' item's 'text' must be a non-empty string"
+        if len(text) > MAX_TURN_TEXT_LENGTH:
+            return f"'rawWindow' item's 'text' exceeds {MAX_TURN_TEXT_LENGTH} characters"
+        if not isinstance(turn["timestamp"], (int, float)) or isinstance(turn["timestamp"], bool):
+            return "Each 'rawWindow' item's 'timestamp' must be a number"
+
+    activity_anchor = payload.get("activityAnchor")
+    if not isinstance(activity_anchor, str):
+        return "'activityAnchor' is required and must be a string (may be empty)"
+    if len(activity_anchor) > MAX_ACTIVITY_ANCHOR_LENGTH:
+        return f"'activityAnchor' exceeds {MAX_ACTIVITY_ANCHOR_LENGTH} characters"
+
+    return None
+
+
+MAX_DYNAMIC_ICONS = 6
+MAX_WORD_LENGTH = 40
+MAX_FLAGGED_LABEL_LENGTH = 200
+
+
+def validate_context_response(response: dict) -> str | None:
+    """Validates the final, already-transformed /context/update response -- flaggedMoment is
+    present only when the model actually flagged something (see ../context/schema.py's
+    docstring for why the raw tool output carries an explicit `present` boolean instead). Used as
+    the runtime "1 retry, then labeled fallback" guard in common/bedrock.py.
+    """
+    if not isinstance(response, dict):
+        return "Response must be a JSON object"
+
+    allowed_keys = {"summary", "dynamicIcons", "flaggedMoment"}
+    required_keys = {"summary", "dynamicIcons"}
+    if not required_keys.issubset(response.keys()) or not set(response.keys()) <= allowed_keys:
+        return "Response must contain 'summary' and 'dynamicIcons', and optionally 'flaggedMoment'"
+
+    if not isinstance(response.get("summary"), str):
+        return "'summary' must be a string"
+
+    dynamic_icons = response.get("dynamicIcons")
+    if not isinstance(dynamic_icons, list) or len(dynamic_icons) > MAX_DYNAMIC_ICONS:
+        return f"'dynamicIcons' must be an array of at most {MAX_DYNAMIC_ICONS} items"
+    seen_words = set()
+    for item in dynamic_icons:
+        if not isinstance(item, dict) or set(item.keys()) != {"word"}:
+            return "Each 'dynamicIcons' item must be an object with exactly 'word'"
+        word = item["word"]
+        if not isinstance(word, str) or not word.strip():
+            return "Each 'dynamicIcons' item's 'word' must be a non-empty string"
+        if len(word) > MAX_WORD_LENGTH:
+            return f"'dynamicIcons' item's 'word' exceeds {MAX_WORD_LENGTH} characters"
+        normalized = word.strip().lower()
+        if normalized in seen_words:
+            return "'dynamicIcons' words must be unique"
+        seen_words.add(normalized)
+
+    if "flaggedMoment" in response:
+        flagged = response["flaggedMoment"]
+        if not isinstance(flagged, dict) or set(flagged.keys()) != {"label", "icons"}:
+            return "'flaggedMoment' must be an object with exactly 'label' and 'icons'"
+        label = flagged["label"]
+        icons = flagged["icons"]
+        if not isinstance(label, str) or not label.strip():
+            return "'flaggedMoment.label' must be a non-empty string"
+        if len(label) > MAX_FLAGGED_LABEL_LENGTH:
+            return f"'flaggedMoment.label' exceeds {MAX_FLAGGED_LABEL_LENGTH} characters"
+        if not isinstance(icons, list) or len(icons) == 0:
+            return "'flaggedMoment.icons' must be a non-empty array"
+        if not all(isinstance(icon, str) and icon in ICON_IDS for icon in icons):
+            return "'flaggedMoment.icons' must contain only valid icon IDs"
+
+    return None
+
+
 def validate_expand_output(payload: object) -> str | None:
     """Validates a payload against EXPAND_OUTPUT_SCHEMA (expand/prompt.py's Bedrock tool-use
     schema) plus candidate-id uniqueness. Used to test that schema/fixtures stay self-consistent;

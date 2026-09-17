@@ -29,3 +29,17 @@ If the backend cannot be reached, Pebble visibly switches to a labeled recorded-
 2. Choose **Create my message**, review the three interpretations, and approve one.
 3. On **Science team**, send: `take the red wire, connect it to the battery first, but make sure the switch is off`.
 4. Return to the student side to see the ordered steps, prominent safety check, transcript, and quick replies.
+
+## Ambient context pipeline
+
+Click the mic button to start session-scoped listening (see `CONTEXT_PIPELINE_PLAN.md`). While
+listening, the app quietly builds a rolling conversation summary in the background and, at real
+topic shifts (not every utterance), calls the backend to refresh the **Words from the
+conversation** row under the board with a few concrete words actually said. This never happens
+per-utterance -- it's debounced by a minimum time gap and a local keyword-diff, so most turns cost
+nothing.
+
+The **Help Maya understand** button is a separate, human-triggered affordance: it surfaces a
+flagged moment (a safety warning or a question addressed to Maya) only when one was actually
+detected, and only when Maya's teacher/aide chooses to look -- receptive help is never
+auto-surfaced onto the board.

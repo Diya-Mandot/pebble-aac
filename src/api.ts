@@ -1,4 +1,12 @@
-import type { Candidate, ExpandResponse, IconId, SimplifyResponse, SpeakResponse } from './types'
+import type {
+  Candidate,
+  ContextUpdateRequest,
+  ContextUpdateResponse,
+  ExpandResponse,
+  IconId,
+  SimplifyResponse,
+  SpeakResponse,
+} from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
@@ -115,4 +123,11 @@ export async function simplifyMessage(text: string): Promise<SimplifyResponse> {
 // speechSynthesis, which speaks the exact same approved text, just with a lower-quality voice.
 export async function speakMessage(text: string): Promise<SpeakResponse> {
   return post<SpeakResponse>('/speak', { text })
+}
+
+// No synthetic fallback here either: a guessed dynamicIcons/flaggedMoment on a network failure
+// would violate the "never guess" design rule (CONTEXT_PIPELINE_PLAN.md). Callers should treat a
+// thrown error as "no update this cycle" and leave the board as it was.
+export async function fetchContextUpdate(payload: ContextUpdateRequest): Promise<ContextUpdateResponse> {
+  return post<ContextUpdateResponse>('/context/update', payload)
 }
