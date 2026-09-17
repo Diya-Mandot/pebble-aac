@@ -1,29 +1,41 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Angry,
+  Annoyed,
   ArrowRight,
   BadgeCheck,
+  BatteryLow,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleHelp,
-  Clock3,
   Ear,
+  Frown,
+  Ghost,
   HandHelping,
+  HelpCircle,
   Info,
+  Laugh,
   Lightbulb,
   MessageCircleHeart,
   MessageCircleQuestionMark,
   Mic,
+  Moon,
   MousePointerClick,
   OctagonX,
+  PartyPopper,
   Puzzle,
   Repeat,
   RotateCcw,
   ScanSearch,
   Shell,
   Sun,
+  Smile,
+  SmilePlus,
   Sparkles,
+  Star,
+  Thermometer,
   ThumbsDown,
   ThumbsUp,
   Trash2,
@@ -51,20 +63,28 @@ type IconDefinition = {
   label: string
   helper: string
   icon: LucideIcon
+  image: string
   tone: string
 }
 
+// Symbol artwork is real AAC pictograms from ARASAAC (https://arasaac.org), the open-source
+// symbol set most AAC tools are built on -- not generic clipart -- served locally from
+// public/aac/*.png. `icon` (lucide) stays as the fallback if an image ever fails to load.
+//
+// `tone` is one of exactly four semantic bands (contribute / respond / regulate / stop), not a
+// decorative per-card hue -- boldness comes from a few strong, consistent signals, not ten
+// competing colors. Grid position/order is unrelated to band and never changes.
 const ICONS: IconDefinition[] = [
-  { id: 'REPEAT', label: 'Repeat', helper: 'Say it again', icon: Repeat, tone: 'lavender' },
-  { id: 'IDEA', label: 'I have an idea', helper: 'I want to share', icon: Lightbulb, tone: 'sun' },
-  { id: 'BUILD', label: 'Build', helper: 'Make or put together', icon: Puzzle, tone: 'blue' },
-  { id: 'HELP', label: 'Help', helper: 'I need support', icon: HandHelping, tone: 'teal' },
-  { id: 'AGREE', label: 'I agree', helper: 'Yes, that works', icon: ThumbsUp, tone: 'mint' },
-  { id: 'DISAGREE', label: 'I disagree', helper: 'I think differently', icon: ThumbsDown, tone: 'peach' },
-  { id: 'QUESTION', label: 'Question', helper: 'I want to ask', icon: MessageCircleQuestionMark, tone: 'lilac' },
-  { id: 'STOP', label: 'Stop', helper: 'Please pause', icon: OctagonX, tone: 'coral' },
-  { id: 'CHECK', label: 'Check', helper: 'Please look again', icon: ScanSearch, tone: 'sky' },
-  { id: 'DONE', label: "I'm done", helper: 'I finished', icon: BadgeCheck, tone: 'green' },
+  { id: 'REPEAT', label: 'Repeat', helper: 'Say it again', icon: Repeat, image: '/aac/repeat.png', tone: 'regulate' },
+  { id: 'IDEA', label: 'I have an idea', helper: 'I want to share', icon: Lightbulb, image: '/aac/idea.png', tone: 'contribute' },
+  { id: 'BUILD', label: 'Build', helper: 'Make or put together', icon: Puzzle, image: '/aac/build.png', tone: 'contribute' },
+  { id: 'HELP', label: 'Help', helper: 'I need support', icon: HandHelping, image: '/aac/help.png', tone: 'regulate' },
+  { id: 'AGREE', label: 'I agree', helper: 'Yes, that works', icon: ThumbsUp, image: '/aac/agree.png', tone: 'respond' },
+  { id: 'DISAGREE', label: 'I disagree', helper: 'I think differently', icon: ThumbsDown, image: '/aac/disagree.png', tone: 'respond' },
+  { id: 'QUESTION', label: 'Question', helper: 'I want to ask', icon: MessageCircleQuestionMark, image: '/aac/question.png', tone: 'contribute' },
+  { id: 'STOP', label: 'Stop', helper: 'Please pause', icon: OctagonX, image: '/aac/stop.png', tone: 'stop' },
+  { id: 'CHECK', label: 'Check', helper: 'Please look again', icon: ScanSearch, image: '/aac/check.png', tone: 'regulate' },
+  { id: 'DONE', label: "I'm done", helper: 'I finished', icon: BadgeCheck, image: '/aac/done.png', tone: 'respond' },
 ]
 
 const contexts = [
@@ -74,12 +94,22 @@ const contexts = [
   { label: 'Art table', value: 'art table' },
 ]
 
+// Each feeling carries its own symbol -- a text label alone is a weaker signal than label + icon
+// together for a child who reads facial/body symbols faster than words.
 const feelings = [
-  { label: 'Unsure' },
-  { label: 'Calm' },
-  { label: 'Excited' },
-  { label: 'Frustrated' },
-  { label: 'Low energy' },
+  { label: 'Unsure', icon: HelpCircle },
+  { label: 'Calm', icon: Smile },
+  { label: 'Happy', icon: Laugh },
+  { label: 'Excited', icon: PartyPopper },
+  { label: 'Proud', icon: Star },
+  { label: 'Silly', icon: SmilePlus },
+  { label: 'Sad', icon: Frown },
+  { label: 'Frustrated', icon: Annoyed },
+  { label: 'Angry', icon: Angry },
+  { label: 'Scared', icon: Ghost },
+  { label: 'Tired', icon: Moon },
+  { label: 'Sick', icon: Thermometer },
+  { label: 'Low energy', icon: BatteryLow },
 ]
 
 // Style-labeled, not person-named -- this is one student (Maya, see the heading/avatar/message
@@ -106,9 +136,76 @@ const normalizeWord = (word: string) => word.trim().toLowerCase()
 const tokenKey = (token: SentenceToken) =>
   token.kind === 'icon' ? `icon:${token.id}` : `word:${normalizeWord(token.word)}`
 
+function PebbleMark({ size = 30 }: { size?: number }) {
+  return (
+    <svg width={size} height={(size / 30) * 32} viewBox="0 0 30 32" fill="none" aria-hidden="true">
+      <ellipse cx="15" cy="25.5" rx="13" ry="8" fill="url(#pebble-g1)" />
+      <ellipse cx="16.5" cy="15" rx="9.5" ry="6.5" fill="url(#pebble-g2)" />
+      <ellipse cx="14.5" cy="6" rx="6" ry="4.3" fill="url(#pebble-g3)" />
+      <defs>
+        <linearGradient id="pebble-g1" x1="2" y1="18" x2="28" y2="34" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#2bb2bd" />
+          <stop offset="1" stopColor="#126f83" />
+        </linearGradient>
+        <linearGradient id="pebble-g2" x1="6" y1="8" x2="25.5" y2="21.5" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#ffb199" />
+          <stop offset="1" stopColor="#f47f6b" />
+        </linearGradient>
+        <linearGradient id="pebble-g3" x1="8" y1="2" x2="21" y2="10" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#ffe08a" />
+          <stop offset="1" stopColor="#f4bf52" />
+        </linearGradient>
+      </defs>
+    </svg>
+  )
+}
+
+// A playful pebble-buddy mascot standing in for a literal photo/initial -- googly sparkle eyes,
+// blush cheeks, and a tiny pebble-stack antenna tying it back to the brand mark.
+function MayaAvatar({ size = 26 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" aria-hidden="true">
+      <line x1="20" y1="5.6" x2="20" y2="8.4" stroke="#2bb2bd" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="20" cy="3.8" r="2.2" fill="#f4bf52" />
+      <circle cx="20" cy="21" r="16" fill="#2bb2bd" />
+      <circle cx="14" cy="18.5" r="4.3" fill="#fff" />
+      <circle cx="26" cy="18.5" r="4.3" fill="#fff" />
+      <circle cx="15" cy="19.1" r="2.3" fill="#2f2a22" />
+      <circle cx="27" cy="19.1" r="2.3" fill="#2f2a22" />
+      <circle cx="13.7" cy="17.4" r="0.9" fill="#fff" />
+      <circle cx="25.7" cy="17.4" r="0.9" fill="#fff" />
+      <ellipse cx="10" cy="24.5" rx="2.7" ry="1.7" fill="#f47f6b" opacity=".55" />
+      <ellipse cx="30" cy="24.5" rx="2.7" ry="1.7" fill="#f47f6b" opacity=".55" />
+      <path d="M13 27 Q20 33.5 27 27" stroke="#155a5f" strokeWidth="2.4" strokeLinecap="round" fill="none" />
+    </svg>
+  )
+}
+
+const getGreeting = () => {
+  const hour = new Date().getHours()
+  if (hour < 12) return 'Good morning, Maya'
+  if (hour < 18) return 'Good afternoon, Maya'
+  return 'Good evening, Maya'
+}
+
 function AacIcon({ id, size = 18 }: { id: IconId; size?: number }) {
-  const Icon = iconById(id).icon
-  return <Icon size={size} strokeWidth={2.2} aria-hidden="true" />
+  const definition = iconById(id)
+  const [imageFailed, setImageFailed] = useState(false)
+  if (imageFailed) {
+    const Icon = definition.icon
+    return <Icon size={size} strokeWidth={2.2} aria-hidden="true" />
+  }
+  return (
+    <img
+      src={definition.image}
+      alt=""
+      aria-hidden="true"
+      width={size}
+      height={size}
+      style={{ width: size, height: size, objectFit: 'contain' }}
+      onError={() => setImageFailed(true)}
+    />
+  )
 }
 
 function SourcePill({ source }: { source: ResponseSource }) {
@@ -209,6 +306,9 @@ function App() {
   // receptive help is never auto-pushed).
   const [flaggedMoment, setFlaggedMoment] = useState<FlaggedMoment | null>(null)
   const [showFlaggedMoment, setShowFlaggedMoment] = useState(false)
+  // Collapsed by default -- context/talking-style/feeling are set once per session, not
+  // restated on screen the whole time; the summary strip below expands this on demand.
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const conversationBufferRef = useRef(new ConversationBuffer())
   const lastApprovedMessageRef = useRef<string | null>(null)
   const [isListening, setIsListening] = useState(false)
@@ -475,26 +575,32 @@ function App() {
       <header className="topbar">
         <div className="brand" aria-label="Pebble home">
           <span className="brand-mark" aria-hidden="true">
-            <span />
-            <span />
-            <span />
+            <PebbleMark />
           </span>
           <span className="brand-word">pebble</span>
           <span className="brand-tagline">Every idea belongs.</span>
         </div>
 
         <div className="topbar-actions">
-          <div className="session-context" title="Current classroom activity">
-            <span className="presence-dot" />
-            <span><strong>Science Lab</strong><small>4 people connected</small></span>
+          <button
+            type="button"
+            className={`mic-chip ${isListening ? 'listening' : ''}`}
+            onClick={toggleVoiceInput}
+            aria-pressed={isListening}
+            aria-label={isListening ? 'Stop listening' : 'Start listening'}
+          >
+            <Mic size={15} />
+            <span>{isListening ? 'Listening to room…' : 'Mic off'}</span>
+          </button>
+          <div className="utility-group">
+            <button className="icon-button" type="button" onClick={() => setShowHelp(true)} aria-label="How Pebble works">
+              <CircleHelp size={21} />
+            </button>
+            <button className="reset-button" type="button" onClick={resetDemo} aria-label="Reset demo">
+              <RotateCcw size={17} />
+              <span>Reset demo</span>
+            </button>
           </div>
-          <button className="icon-button" type="button" onClick={() => setShowHelp(true)} aria-label="How Pebble works">
-            <CircleHelp size={21} />
-          </button>
-          <button className="reset-button" type="button" onClick={resetDemo}>
-            <RotateCcw size={17} />
-            <span>Reset demo</span>
-          </button>
         </div>
       </header>
 
@@ -512,46 +618,18 @@ function App() {
           </div>
           <div className="panel-heading student-heading">
             <div className="person-block">
-              <div className="avatar student-avatar" aria-hidden="true">M</div>
-              <div>
-                <span className="eyebrow">AAC workspace</span>
-                <h1 id="student-title">Maya’s voice</h1>
+              <div className={`avatar-ring ${isListening ? 'active' : ''}`}>
+                <div className="avatar student-avatar" aria-hidden="true"><MayaAvatar /></div>
               </div>
-            </div>
-            <div className="heading-actions">
-              <button
-                type="button"
-                className="help-understand-button"
-                aria-pressed={showFlaggedMoment}
-                onClick={() => setShowFlaggedMoment((value) => !value)}
-              >
-                <HandHelping size={15} /> <span>Help Maya understand</span>
-              </button>
-              <div className="take-time"><Clock3 size={15} /> Take your time</div>
+              <h1 id="student-title">{getGreeting()}</h1>
             </div>
           </div>
 
-          <div className="student-scroll">
-            <section className="listening-control" aria-label="Ambient listening">
-              <button
-                className={`mic-button ${isListening ? 'listening' : ''}`}
-                type="button"
-                onClick={toggleVoiceInput}
-                aria-pressed={isListening}
-                aria-label={isListening ? 'Stop listening' : 'Start listening'}
-              >
-                <Mic size={22} />
-              </button>
-              <div className="listening-status">
-                <strong>{isListening ? 'Listening…' : 'Not listening'}</strong>
-                <span>
-                  {isListening
-                    ? liveCaption || 'Following the conversation…'
-                    : 'Turn on the mic to follow along and get help understanding.'}
-                </span>
-              </div>
-            </section>
+          {isListening && liveCaption && (
+            <p className="live-caption" aria-live="polite">{liveCaption}</p>
+          )}
 
+          <div className="student-scroll">
             {showFlaggedMoment && (
               <div className="flagged-moment-card" role="status">
                 {flaggedMoment ? (
@@ -655,42 +733,69 @@ function App() {
               </section>
             )}
 
-            <section className="setup-row" aria-label="Conversation settings">
-              <label>
-                <span>We’re working on</span>
-                <div className="select-wrap">
-                  <select value={context} onChange={(event) => changeContext(event.target.value)}>
-                    {contexts.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                  </select>
-                  <ChevronDown size={17} />
+            <section className="settings-drawer" aria-label="Conversation settings">
+              <button
+                type="button"
+                className="settings-toggle"
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((value) => !value)}
+              >
+                <span className="settings-summary">
+                  <strong>{contexts.find((item) => item.value === context)?.label}</strong>
+                  <i aria-hidden="true">·</i>
+                  <span>{PROFILES.find((item) => item.id === profileId)?.label}</span>
+                  <i aria-hidden="true">·</i>
+                  <span>{feeling}</span>
+                </span>
+                <span className="settings-edit">Edit <ChevronDown size={16} className={settingsOpen ? 'rotated' : ''} /></span>
+              </button>
+              {settingsOpen && (
+                <div className="settings-body">
+                  <label>
+                    <span>We’re working on</span>
+                    <div className="select-wrap">
+                      <select value={context} onChange={(event) => changeContext(event.target.value)}>
+                        {contexts.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                      </select>
+                      <ChevronDown size={17} />
+                    </div>
+                  </label>
+                  <fieldset className="profile-toggle-row">
+                    <legend>Talking style</legend>
+                    <div className="profile-toggle" role="group" aria-label="Talking style">
+                      {PROFILES.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className={profileId === item.id ? 'active' : ''}
+                          aria-pressed={profileId === item.id}
+                          onClick={() => switchProfile(item.id)}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                    <small className="profile-traits">{PROFILES.find((item) => item.id === profileId)?.traits}</small>
+                  </fieldset>
+                  <label>
+                    <span>I’m feeling</span>
+                    <div className="feeling-row">
+                      <div className="select-wrap">
+                        <select value={feeling} onChange={(event) => setFeeling(event.target.value)}>
+                          {feelings.map((item) => <option key={item.label} value={item.label}>{item.label}</option>)}
+                        </select>
+                        <ChevronDown size={17} />
+                      </div>
+                      <span className="feeling-symbol" aria-hidden="true">
+                        {(() => {
+                          const FeelingIcon = feelings.find((item) => item.label === feeling)?.icon ?? HelpCircle
+                          return <FeelingIcon size={20} strokeWidth={2.2} />
+                        })()}
+                      </span>
+                    </div>
+                  </label>
                 </div>
-              </label>
-              <fieldset className="profile-toggle-row">
-                <legend>Talking style</legend>
-                <div className="profile-toggle" role="group" aria-label="Talking style">
-                  {PROFILES.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={profileId === item.id ? 'active' : ''}
-                      aria-pressed={profileId === item.id}
-                      onClick={() => switchProfile(item.id)}
-                    >
-                      {item.label}
-                    </button>
-                  ))}
-                </div>
-                <small className="profile-traits">{PROFILES.find((item) => item.id === profileId)?.traits}</small>
-              </fieldset>
-              <label>
-                <span>I’m feeling</span>
-                <div className="select-wrap">
-                  <select value={feeling} onChange={(event) => setFeeling(event.target.value)}>
-                    {feelings.map((item) => <option key={item.label} value={item.label}>{item.label}</option>)}
-                  </select>
-                  <ChevronDown size={17} />
-                </div>
-              </label>
+              )}
             </section>
 
             <section className="board-section" aria-labelledby="board-title">
@@ -716,7 +821,7 @@ function App() {
                       aria-label={`${item.label}: ${item.helper}`}
                     >
                       {isSelected && <span className="selection-order" aria-label={`Selected item ${selectedIndex + 1}`}><Check size={13} strokeWidth={3} /></span>}
-                      <span className="aac-symbol"><AacIcon id={item.id} size={30} /></span>
+                      <span className="aac-symbol"><AacIcon id={item.id} size={54} /></span>
                       <strong>{item.label}</strong>
                       <small>{item.helper}</small>
                     </button>
