@@ -2,3 +2,8 @@ __pycache__/
 *.py[cod]
 .aws-sam/
 RISHABH_TASKS.md
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.local
