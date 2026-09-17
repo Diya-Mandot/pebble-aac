@@ -98,10 +98,14 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visi
 
 .dynamic-row-section { margin-top: 14px; }
 .dynamic-row { display: grid; grid-template-columns: repeat(6, minmax(64px, 1fr)); gap: 8px; }
-.dynamic-tile { min-height: 52px; display: flex; align-items: center; justify-content: center; padding: 8px 6px; border: 1.5px dashed #cbd5e1; border-radius: 13px; background: #f8fafc; text-align: center; }
+.dynamic-tile { min-height: 62px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 8px 6px; border: 1.5px dashed #cbd5e1; border-radius: 13px; background: #f8fafc; text-align: center; font: inherit; appearance: none; }
+.dynamic-tile.empty { cursor: default; }
 .dynamic-tile strong { font-family: Nunito, sans-serif; font-size: 12px; color: #0f766e; line-height: 1.2; word-break: break-word; }
 .dynamic-tile-placeholder { width: 6px; height: 6px; border-radius: 50%; background: #d8e0e8; }
-.dynamic-tile.filled { border-style: solid; border-color: #a7d8d0; background: #eefbf8; animation: dynamicTilePulse .9s ease-out; }
+.dynamic-tile.filled { border-style: solid; border-color: #a7d8d0; background: #eefbf8; cursor: pointer; animation: dynamicTilePulse .9s ease-out; }
+.dynamic-tile.filled:hover { transform: translateY(-1px); }
+.dynamic-tile.filled.selected { border-color: var(--blue); box-shadow: 0 0 0 3px #dbeafe; background: #fff; }
+.dynamic-symbol svg { color: #0f766e; }
 @keyframes dynamicTilePulse {
   0% { box-shadow: 0 0 0 0 rgba(13, 148, 136, .35); transform: scale(1.04); }
   100% { box-shadow: 0 0 0 10px rgba(13, 148, 136, 0); transform: scale(1); }
@@ -202,7 +206,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visi
   .brand-word { font-size: 22px; }.session-context { display: none; }
   .student-scroll { padding: 16px 13px 20px; }.setup-row { grid-template-columns: 1fr 1fr; gap: 8px; }.setup-row select { font-size: 11px; }
   .aac-grid { grid-template-columns: repeat(2, 1fr); gap: 9px; }.aac-tile { min-height: 112px; }.aac-tile small { font-size: 9px; }
-  .dynamic-row { grid-template-columns: repeat(3, minmax(56px, 1fr)); gap: 7px; }.dynamic-tile { min-height: 46px; }
+  .dynamic-row { grid-template-columns: repeat(3, minmax(56px, 1fr)); gap: 7px; }.dynamic-tile { min-height: 58px; }
   .heading-actions { justify-content: flex-start; }.help-understand-button span { display: none; }
   .section-heading { align-items: center; }.section-heading h2 { font-size: 17px; }
   .student-composer { padding: 10px 12px; }.selected-chips { flex-wrap: nowrap; max-width: calc(100vw - 68px); overflow-x: auto; padding: 2px; }.selected-chips button { flex: 0 0 auto; }.selected-chips i { display: none; }

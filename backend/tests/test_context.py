@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 
 from src.context.app import lambda_handler as context_handler
 from src.context.schema import CONTEXT_TOOL_NAME
-from src.common.bedrock import MIN_MS_FOR_ATTEMPT
+from src.common.bedrock import MIN_MS_FOR_ATTEMPT, _transform_context_tool_output
 
 CONTEXT_FIXTURES_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "context_fixtures.json"
 
@@ -38,7 +38,7 @@ NO_FLAG = {"present": False, "label": "", "icons": []}
 
 VALID_RAW_OUTPUT = {
     "summary": "The group is building a tower.",
-    "dynamicIcons": [{"word": "tower"}, {"word": "block"}],
+    "dynamicIcons": [{"word": "tower", "symbol": "building"}, {"word": "block", "symbol": "none"}],
     "flaggedMoment": NO_FLAG,
 }
 
@@ -110,14 +110,14 @@ class ContextContractTest(unittest.TestCase):
         self.assertEqual(result["statusCode"], 200)
         self.assertEqual(body["source"], "live")
         self.assertEqual(body["summary"], "The group is building a tower.")
-        self.assertEqual(body["dynamicIcons"], [{"word": "tower"}, {"word": "block"}])
+        self.assertEqual(body["dynamicIcons"], [{"word": "tower", "symbol": "building"}, {"word": "block"}])
         self.assertNotIn("flaggedMoment", body)
 
     @patch("src.common.bedrock.get_client")
     def test_flagged_moment_present_is_included_in_response(self, mock_get_client):
         raw = {
             "summary": "A peer warned the student not to touch a hot part.",
-            "dynamicIcons": [{"word": "hot"}],
+            "dynamicIcons": [{"word": "hot", "symbol": "flame"}],
             "flaggedMoment": {"present": True, "label": "Don't touch, it's hot", "icons": ["STOP", "CHECK"]},
         }
         mock_client = MagicMock()
@@ -150,7 +150,8 @@ class ContextContractTest(unittest.TestCase):
         self.assertEqual(body["source"], "fallback")
         self.assertIn("flaggedMoment", body)
         self.assertIn("STOP", body["flaggedMoment"]["icons"])
-        self.assertEqual(body["dynamicIcons"], fixture["response"]["dynamicIcons"])
+        expected = _transform_context_tool_output(fixture["response"])["dynamicIcons"]
+        self.assertEqual(body["dynamicIcons"], expected)
 
     @patch("src.common.bedrock.get_client")
     def test_falls_back_to_generic_deterministic_response_for_unscripted_transcript(self, mock_get_client):
@@ -173,6 +174,7 @@ class ContextContractTest(unittest.TestCase):
         self.assertNotIn("flaggedMoment", body)
         words = {icon["word"].lower() for icon in body["dynamicIcons"]}
         self.assertTrue({"paint", "birdhouse", "yellow", "tomorrow"} & words)
+        self.assertTrue(all("symbol" not in icon for icon in body["dynamicIcons"]))
 
     @patch("src.common.bedrock.get_client")
     def test_retries_once_on_malformed_output_then_succeeds(self, mock_get_client):
@@ -187,6 +189,26 @@ class ContextContractTest(unittest.TestCase):
         body = json.loads(result["body"])
 
         self.assertEqual(body["source"], "live")
+        self.assertEqual(mock_client.converse.call_count, 2)
+
+    @patch("src.common.bedrock.get_client")
+    def test_unknown_symbol_in_raw_output_is_rejected_then_falls_back(self, mock_get_client):
+        bad_symbol_output = {
+            "summary": "The group is building a tower.",
+            "dynamicIcons": [{"word": "tower", "symbol": "not-a-real-symbol"}],
+            "flaggedMoment": NO_FLAG,
+        }
+        mock_client = MagicMock()
+        mock_client.converse.side_effect = [
+            _tool_use_response(bad_symbol_output),
+            _tool_use_response(bad_symbol_output),
+        ]
+        mock_get_client.return_value = mock_client
+
+        result = context_handler(self._event([{"text": "building a tower", "timestamp": 1}]), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["source"], "fallback")
         self.assertEqual(mock_client.converse.call_count, 2)
 
     @patch("src.common.bedrock.get_client")

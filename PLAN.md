@@ -30,8 +30,9 @@ QuickReplyID: `DONE, NEED_HELP` · system status: `PLEASE_REPEAT`
 ## API contract (FREEZE IN THE NEXT HOUR — integration owner: [YOU])
 
 ```
-POST /expand    {icons:[IconID], context:string, profileId:string}
+POST /expand    {tokens:[{kind:"icon",id:IconID}|{kind:"word",word:string}], context:string, profileId:string}
              → {candidates:[{id,text}], source:"mock"|"live"|"fallback", error?}
+             (tokens is ordered; every candidate must contain each word token verbatim)
 POST /simplify  {text:string}
              → {steps:[{icons:[IconID], label:string}], warnings:[{icons:[IconID], label:string}],
                 quickReplies:[QuickReplyID], transcript:string, status:"ok"|"please_repeat",

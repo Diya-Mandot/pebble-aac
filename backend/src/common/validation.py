@@ -1,9 +1,11 @@
 """Shared request validation. Returns an error string, or None if the request is valid."""
 import json
+import re
 
 from jsonschema import Draft202012Validator
 
 from .icons import ICON_IDS, QUICK_REPLY_IDS
+from ..context.symbols import SYMBOL_IDS
 from ..expand.prompt import EXPAND_OUTPUT_SCHEMA
 
 _EXPAND_OUTPUT_VALIDATOR = Draft202012Validator(EXPAND_OUTPUT_SCHEMA)
@@ -18,17 +20,49 @@ def parse_json_body(raw_body):
         return None, "Request body must be valid JSON"
 
 
+MAX_EXPAND_TOKENS = 16
+MAX_EXPAND_WORDS = 6
+
+
 def validate_expand_request(payload: dict) -> str | None:
     if not isinstance(payload, dict):
         return "Request body must be a JSON object"
-    icons = payload.get("icons")
-    if not isinstance(icons, list) or len(icons) == 0:
-        return "'icons' is required and must be a non-empty array"
-    if not all(isinstance(icon, str) for icon in icons):
-        return "'icons' must contain only strings"
-    unknown = [icon for icon in icons if icon not in ICON_IDS]
-    if unknown:
-        return f"Unknown icon id(s): {unknown}"
+
+    tokens = payload.get("tokens")
+    if not isinstance(tokens, list) or len(tokens) == 0:
+        return "'tokens' is required and must be a non-empty array"
+    if len(tokens) > MAX_EXPAND_TOKENS:
+        return f"'tokens' exceeds {MAX_EXPAND_TOKENS} items"
+
+    seen_words = set()
+    word_count = 0
+    for token in tokens:
+        if not isinstance(token, dict) or "kind" not in token:
+            return "Each 'tokens' item must be an object with a 'kind'"
+        kind = token["kind"]
+        if kind == "icon":
+            if set(token.keys()) != {"kind", "id"}:
+                return "Each icon token must have exactly 'kind' and 'id' keys"
+            if token["id"] not in ICON_IDS:
+                return f"Unknown icon id: {token['id']}"
+        elif kind == "word":
+            if set(token.keys()) != {"kind", "word"}:
+                return "Each word token must have exactly 'kind' and 'word' keys"
+            word = token["word"]
+            if not isinstance(word, str) or not word.strip():
+                return "Each word token's 'word' must be a non-empty string"
+            if len(word) > MAX_WORD_LENGTH:
+                return f"Word token exceeds {MAX_WORD_LENGTH} characters"
+            normalized = word.strip().lower()
+            if normalized in seen_words:
+                return "Word tokens must be unique"
+            seen_words.add(normalized)
+            word_count += 1
+            if word_count > MAX_EXPAND_WORDS:
+                return f"'tokens' must contain at most {MAX_EXPAND_WORDS} word tokens"
+        else:
+            return f"Unknown token kind: {kind}"
+
     profile_id = payload.get("profileId")
     if not isinstance(profile_id, str) or not profile_id.strip():
         return "'profileId' is required and must be a non-empty string"
@@ -98,12 +132,15 @@ def validate_profile_request(payload: dict) -> str | None:
 MAX_CANDIDATE_TEXT_LENGTH = 200
 
 
-def validate_expand_candidates(candidates) -> str | None:
+def validate_expand_candidates(candidates, words=()) -> str | None:
     """Validates model-produced /expand candidates. Returns an error string, or None if valid.
 
     Deliberately stricter than the base contract shape: rejects duplicate ids/texts, oversized
     text, and unexpected keys, since this is the last line of defense against a schema-constrained
-    Bedrock call still returning something we shouldn't show a student.
+    Bedrock call still returning something we shouldn't show a student. `words` are the conversation
+    words the student explicitly selected (in addition to any icons) -- every candidate must
+    include each one verbatim (case-insensitive, whole word), so a live response that silently
+    drops a word the student chose is treated exactly like malformed output: 1 retry, then fallback.
     """
     if not isinstance(candidates, list) or len(candidates) != 3:
         return "'candidates' must be an array of exactly 3 items"
@@ -127,6 +164,9 @@ def validate_expand_candidates(candidates) -> str | None:
             return "Candidate 'text' values must be unique"
         seen_ids.add(candidate_id)
         seen_texts.add(text)
+        for word in words:
+            if not re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE):
+                return f"Candidate 'text' must include the selected word '{word}'"
 
     return None
 
@@ -199,13 +239,15 @@ def validate_context_response(response: dict) -> str | None:
         return f"'dynamicIcons' must be an array of at most {MAX_DYNAMIC_ICONS} items"
     seen_words = set()
     for item in dynamic_icons:
-        if not isinstance(item, dict) or set(item.keys()) != {"word"}:
-            return "Each 'dynamicIcons' item must be an object with exactly 'word'"
+        if not isinstance(item, dict) or not ({"word"} <= set(item.keys()) <= {"word", "symbol"}):
+            return "Each 'dynamicIcons' item must be an object with 'word' and optionally 'symbol'"
         word = item["word"]
         if not isinstance(word, str) or not word.strip():
             return "Each 'dynamicIcons' item's 'word' must be a non-empty string"
         if len(word) > MAX_WORD_LENGTH:
             return f"'dynamicIcons' item's 'word' exceeds {MAX_WORD_LENGTH} characters"
+        if "symbol" in item and item["symbol"] not in SYMBOL_IDS:
+            return "Each 'dynamicIcons' item's 'symbol' must be a known bank id"
         normalized = word.strip().lower()
         if normalized in seen_words:
             return "'dynamicIcons' words must be unique"

@@ -4,6 +4,7 @@ import type {
   ContextUpdateResponse,
   ExpandResponse,
   IconId,
+  SentenceToken,
   SimplifyResponse,
   SpeakResponse,
 } from './types'
@@ -40,8 +41,11 @@ const scriptedFallbackByProfile: Record<string, Candidate[]> = {
   ],
 }
 
-const genericFallback = (icons: IconId[]): Candidate[] => {
-  const words = icons.map((id) => ICON_LABELS[id]).join(', ')
+// Walks tokens in order (icon -> its label, word -> itself) so the offline fallback text
+// preserves the sequence the student actually built, matching the backend's own fallback shape
+// (see backend/src/common/bedrock.py's _deterministic_fallback).
+const genericFallback = (tokens: SentenceToken[]): Candidate[] => {
+  const words = tokens.map((token) => (token.kind === 'icon' ? ICON_LABELS[token.id] : token.word)).join(', ')
   return [
     { id: 'c1', text: `I want to say: ${words}.` },
     { id: 'c2', text: `Can we talk about ${words}?` },
@@ -92,19 +96,29 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export async function expandMessage(icons: IconId[], context: string, profileId: string): Promise<ExpandResponse> {
+export async function expandMessage(
+  tokens: SentenceToken[],
+  context: string,
+  profileId: string,
+): Promise<ExpandResponse> {
+  // symbol is presentation-only; the backend token shape has no such field.
+  const wireTokens = tokens.map((token) =>
+    token.kind === 'icon' ? { kind: 'icon' as const, id: token.id } : { kind: 'word' as const, word: token.word },
+  )
   try {
-    return await post<ExpandResponse>('/expand', { icons, context, profileId })
+    return await post<ExpandResponse>('/expand', { tokens: wireTokens, context, profileId })
   } catch {
     // Exact order, not membership -- mirrors expand/app.py's _scripted_fallback_candidates
-    // (`request["icons"] != list(icons)`), so a reordered selection like HELP+BUILD+CONFUSED
-    // correctly falls through to the generic fallback instead of matching the scripted
-    // CONFUSED+BUILD+HELP demo response it wasn't recorded for.
-    const isScripted = context === SCRIPTED_CONTEXT && icons.length === SCRIPTED_ICONS.length
-      && icons.every((id, index) => id === SCRIPTED_ICONS[index])
+    // (every token must be an icon matching SCRIPTED_ICONS in order), so a reordered selection
+    // like HELP+BUILD+CONFUSED, or any selection including a word token, correctly falls through
+    // to the generic fallback instead of matching the scripted CONFUSED+BUILD+HELP demo response
+    // it wasn't recorded for.
+    const isScripted = context === SCRIPTED_CONTEXT
+      && tokens.length === SCRIPTED_ICONS.length
+      && tokens.every((token, index) => token.kind === 'icon' && token.id === SCRIPTED_ICONS[index])
     const candidates = isScripted
       ? (scriptedFallbackByProfile[profileId] ?? scriptedFallbackByProfile.demo)
-      : genericFallback(icons)
+      : genericFallback(tokens)
     return { candidates, source: 'fallback', error: 'The live service is unavailable. Showing a demo fallback.' }
   }
 }

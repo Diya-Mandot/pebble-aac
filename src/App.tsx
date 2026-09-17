@@ -36,10 +36,12 @@ import type {
   IconId,
   QuickReplyId,
   ResponseSource,
+  SentenceToken,
   SimplifyResponse,
 } from './types'
 import { emitTurn, onTurn } from './turnEmitter'
 import { ConversationBuffer } from './conversationBuffer'
+import { symbolIcon } from './symbols'
 
 type IconDefinition = {
   id: IconId
@@ -96,6 +98,11 @@ const toDynamicSlots = (icons: DynamicIconSlot[]): (DynamicIconSlot | null)[] =>
 
 const iconById = (id: IconId) => ICONS.find((item) => item.id === id) ?? ICONS[6]
 
+const normalizeWord = (word: string) => word.trim().toLowerCase()
+
+const tokenKey = (token: SentenceToken) =>
+  token.kind === 'icon' ? `icon:${token.id}` : `word:${normalizeWord(token.word)}`
+
 function AacIcon({ id, size = 18 }: { id: IconId; size?: number }) {
   const Icon = iconById(id).icon
   return <Icon size={size} strokeWidth={2.2} aria-hidden="true" />
@@ -131,25 +138,52 @@ function MiniIcons({ ids }: { ids: IconId[] }) {
 // Dumb presentational component -- slot content is swappable (fake data now, Track D's response
 // once Track E wires it up). Position/count of slots is fixed; only the word in each slot changes.
 // Keying each tile by its slot index + word makes React remount only the tile whose word actually
-// changed, so the CSS mount animation naturally pulses just that tile instead of the whole row.
-function DynamicIconRow({ slots }: { slots: (DynamicIconSlot | null)[] }) {
+// changed, so the CSS mount animation naturally pulses just that tile instead of the whole row --
+// tapping a filled tile toggles it into the sentence tray below, same as the fixed vocabulary tiles.
+function DynamicIconRow({
+  slots,
+  selectedWordKeys,
+  onToggle,
+}: {
+  slots: (DynamicIconSlot | null)[]
+  selectedWordKeys: Set<string>
+  onToggle: (slot: DynamicIconSlot) => void
+}) {
   return (
-    <div className="dynamic-row" role="list" aria-label="Words from the conversation">
-      {slots.map((slot, index) => (
-        <div
-          className={`dynamic-tile ${slot ? 'filled' : 'empty'}`}
-          role="listitem"
-          key={`${index}-${slot?.word ?? 'empty'}`}
-        >
-          {slot ? <strong>{slot.word}</strong> : <span className="dynamic-tile-placeholder" aria-hidden="true" />}
-        </div>
-      ))}
+    <div className="dynamic-row" role="group" aria-label="Words from the conversation">
+      {slots.map((slot, index) => {
+        if (!slot) {
+          return (
+            <div className="dynamic-tile empty" key={`${index}-empty`} aria-hidden="true">
+              <span className="dynamic-tile-placeholder" />
+            </div>
+          )
+        }
+        const Icon = symbolIcon(slot.symbol)
+        const isSelected = selectedWordKeys.has(normalizeWord(slot.word))
+        return (
+          <button
+            type="button"
+            className={`dynamic-tile filled ${isSelected ? 'selected' : ''}`}
+            aria-pressed={isSelected}
+            key={`${index}-${slot.word}`}
+            onClick={() => onToggle(slot)}
+          >
+            {Icon && (
+              <span className="dynamic-symbol">
+                <Icon size={18} strokeWidth={2.2} aria-hidden="true" />
+              </span>
+            )}
+            <strong>{slot.word}</strong>
+          </button>
+        )
+      })}
     </div>
   )
 }
 
 function App() {
-  const [selectedIcons, setSelectedIcons] = useState<IconId[]>([])
+  const [sentence, setSentence] = useState<SentenceToken[]>([])
   const [context, setContext] = useState(contexts[0].value)
   const [feeling, setFeeling] = useState(feelings[0].label)
   const [profileId, setProfileId] = useState(PROFILES[0].id)
@@ -220,20 +254,26 @@ function App() {
     setIsExpanding(false)
   }
 
-  const selectedDefinitions = useMemo(
-    () => selectedIcons.map((id) => iconById(id)),
-    [selectedIcons],
+  const selectedWordKeys = useMemo(
+    () => new Set(sentence.filter((token) => token.kind === 'word').map((token) => normalizeWord(token.word))),
+    [sentence],
   )
 
-  const toggleIcon = (id: IconId) => {
+  const toggleToken = (token: SentenceToken) => {
     invalidatePendingRequest()
     setCandidates([])
     setCandidateSource(null)
-    setSelectedIcons((current) => {
-      if (current.includes(id)) return current.filter((item) => item !== id)
-      return [...current, id]
+    setSentence((current) => {
+      const key = tokenKey(token)
+      if (current.some((item) => tokenKey(item) === key)) {
+        return current.filter((item) => tokenKey(item) !== key)
+      }
+      return [...current, token]
     })
   }
+
+  const toggleIcon = (id: IconId) => toggleToken({ kind: 'icon', id })
+  const toggleWord = (slot: DynamicIconSlot) => toggleToken({ kind: 'word', word: slot.word, symbol: slot.symbol })
 
   const switchProfile = (id: string) => {
     invalidatePendingRequest()
@@ -250,12 +290,12 @@ function App() {
   }
 
   const makeMessage = async () => {
-    if (!selectedIcons.length) return
+    if (!sentence.length) return
     invalidatePendingRequest()
     const requestId = requestIdRef.current
     setIsExpanding(true)
     setCandidates([])
-    const response = await expandMessage(selectedIcons, context, profileId)
+    const response = await expandMessage(sentence, context, profileId)
     if (requestIdRef.current !== requestId) return // superseded; loading state already handled at invalidation time
     setIsExpanding(false)
     setCandidates(response.candidates)
@@ -289,7 +329,7 @@ function App() {
 
   const approveCandidate = (candidate: Candidate) => {
     lastApprovedMessageRef.current = candidate.text
-    setSelectedIcons([])
+    setSentence([])
     setCandidates([])
     setCandidateSource(null)
     setNotice('Your message was spoken aloud.')
@@ -387,7 +427,7 @@ function App() {
 
   const resetDemo = () => {
     invalidatePendingRequest()
-    setSelectedIcons([])
+    setSentence([])
     setCandidates([])
     setCandidateSource(null)
     setSimplified(null)
@@ -603,12 +643,12 @@ function App() {
                   <span className="eyebrow">Choose one or more</span>
                   <h2 id="board-title">What do you want to say?</h2>
                 </div>
-                <span className="selection-count">{selectedIcons.length} selected</span>
+                <span className="selection-count">{sentence.length} selected</span>
               </div>
 
               <div className="aac-grid">
                 {ICONS.map((item) => {
-                  const selectedIndex = selectedIcons.indexOf(item.id)
+                  const selectedIndex = sentence.findIndex((token) => token.kind === 'icon' && token.id === item.id)
                   const isSelected = selectedIndex >= 0
                   return (
                     <button
@@ -636,21 +676,32 @@ function App() {
                   <h2 id="dynamic-row-title">Words from the conversation</h2>
                 </div>
               </div>
-              <DynamicIconRow slots={dynamicIcons} />
+              <DynamicIconRow slots={dynamicIcons} selectedWordKeys={selectedWordKeys} onToggle={toggleWord} />
             </section>
           </div>
 
           <div className="student-composer">
-            <div className={`selection-tray ${selectedIcons.length ? 'has-items' : ''}`} aria-live="polite">
-              {selectedDefinitions.length ? (
+            <div className={`selection-tray ${sentence.length ? 'has-items' : ''}`} aria-live="polite">
+              {sentence.length ? (
                 <>
                   <div className="selected-chips">
-                    {selectedDefinitions.map((item, index) => (
-                      <button key={item.id} onClick={() => toggleIcon(item.id)} title={`Remove ${item.label}`}>
-                        <span className="token-icon"><AacIcon id={item.id} size={15} /></span> {item.label} <X size={13} />
-                        {index < selectedDefinitions.length - 1 && <i aria-hidden="true"><ArrowRight size={14} /></i>}
-                      </button>
-                    ))}
+                    {sentence.map((token, index) => {
+                      const label = token.kind === 'icon' ? iconById(token.id).label : token.word
+                      const WordIcon = token.kind === 'word' ? symbolIcon(token.symbol) : null
+                      return (
+                        <button key={tokenKey(token)} onClick={() => toggleToken(token)} title={`Remove ${label}`}>
+                          <span className="token-icon">
+                            {token.kind === 'icon' ? (
+                              <AacIcon id={token.id} size={15} />
+                            ) : (
+                              WordIcon && <WordIcon size={15} aria-hidden="true" />
+                            )}
+                          </span>{' '}
+                          {label} <X size={13} />
+                          {index < sentence.length - 1 && <i aria-hidden="true"><ArrowRight size={14} /></i>}
+                        </button>
+                      )
+                    })}
                   </div>
                   <button
                     className="clear-button"
@@ -658,7 +709,7 @@ function App() {
                       invalidatePendingRequest()
                       setCandidates([])
                       setCandidateSource(null)
-                      setSelectedIcons([])
+                      setSentence([])
                     }}
                     aria-label="Clear all selections"
                   ><Trash2 size={17} /></button>
@@ -667,7 +718,7 @@ function App() {
                 <span className="tray-placeholder"><MousePointerClick size={17} /> Tap a card to begin your message</span>
               )}
             </div>
-            <button className="primary-button" onClick={makeMessage} disabled={!selectedIcons.length || isExpanding}>
+            <button className="primary-button" onClick={makeMessage} disabled={!sentence.length || isExpanding}>
               {isExpanding ? <><span className="spinner" /> Finding your words…</> : <><Sparkles size={19} /> Create my message</>}
             </button>
           </div>

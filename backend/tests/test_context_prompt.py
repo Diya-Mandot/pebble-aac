@@ -38,7 +38,7 @@ class ContextFixtureSchemaTest(unittest.TestCase):
 class ContextToolOutputValidationTest(unittest.TestCase):
     VALID = {
         "summary": "The group is building a tower.",
-        "dynamicIcons": [{"word": "tower"}, {"word": "block"}],
+        "dynamicIcons": [{"word": "tower", "symbol": "building"}, {"word": "block", "symbol": "none"}],
         "flaggedMoment": {"present": False, "label": "", "icons": []},
     }
 
@@ -60,12 +60,27 @@ class ContextToolOutputValidationTest(unittest.TestCase):
         self.assertIsNotNone(validate_context_tool_output(candidate))
 
     def test_more_than_six_dynamic_icons_rejected(self):
-        candidate = {**self.VALID, "dynamicIcons": [{"word": f"w{i}"} for i in range(7)]}
+        candidate = {**self.VALID, "dynamicIcons": [{"word": f"w{i}", "symbol": "none"} for i in range(7)]}
         self.assertIsNotNone(validate_context_tool_output(candidate))
 
     def test_duplicate_dynamic_icon_words_rejected(self):
-        candidate = {**self.VALID, "dynamicIcons": [{"word": "tower"}, {"word": "Tower"}]}
+        candidate = {
+            **self.VALID,
+            "dynamicIcons": [{"word": "tower", "symbol": "none"}, {"word": "Tower", "symbol": "none"}],
+        }
         self.assertIsNotNone(validate_context_tool_output(candidate))
+
+    def test_missing_symbol_key_rejected(self):
+        candidate = {**self.VALID, "dynamicIcons": [{"word": "tower"}]}
+        self.assertIsNotNone(validate_context_tool_output(candidate))
+
+    def test_unknown_symbol_rejected(self):
+        candidate = {**self.VALID, "dynamicIcons": [{"word": "tower", "symbol": "not-a-real-symbol"}]}
+        self.assertIsNotNone(validate_context_tool_output(candidate))
+
+    def test_none_sentinel_accepted(self):
+        candidate = {**self.VALID, "dynamicIcons": [{"word": "tower", "symbol": "none"}]}
+        self.assertIsNone(validate_context_tool_output(candidate))
 
     def test_unknown_icon_id_rejected(self):
         candidate = {
@@ -96,6 +111,10 @@ class ContextPromptTest(unittest.TestCase):
         self.assertIn("never guess", CONTEXT_SYSTEM_PROMPT.lower())
         self.assertIn(CONTEXT_TOOL_NAME, CONTEXT_SYSTEM_PROMPT)
         self.assertIn("STOP", CONTEXT_SYSTEM_PROMPT)
+
+    def test_system_prompt_includes_symbol_bank_and_none_sentinel(self):
+        self.assertIn('"none"', CONTEXT_SYSTEM_PROMPT)
+        self.assertIn("battery", CONTEXT_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":

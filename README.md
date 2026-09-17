@@ -35,9 +35,10 @@ If the backend cannot be reached, Pebble visibly switches to a labeled recorded-
 Click the mic button to start session-scoped listening (see `CONTEXT_PIPELINE_PLAN.md`). While
 listening, the app quietly builds a rolling conversation summary in the background and, at real
 topic shifts (not every utterance), calls the backend to refresh the **Words from the
-conversation** row under the board with a few concrete words actually said. This never happens
-per-utterance -- it's debounced by a minimum time gap and a local keyword-diff, so most turns cost
-nothing.
+conversation** row under the board with a few concrete words actually said, each optionally paired
+with a small symbol from a fixed icon bank. This never happens per-utterance -- it's debounced by
+a minimum time gap and a local keyword-diff, so most turns cost nothing. Tap a word tile to add it
+to your message, exactly like the fixed vocabulary tiles above it.
 
 The **Help Maya understand** button is a separate, human-triggered affordance: it surfaces a
 flagged moment (a safety warning or a question addressed to Maya) only when one was actually

@@ -55,8 +55,9 @@ dependency on A/B/D until final wiring.
 
 - [ ] Add the fixed ~6-slot row to the board layout in [src/App.tsx](src/App.tsx)/
       [src/styles.css](src/styles.css), visually distinct from the permanent 10-icon set.
-- [ ] Render dynamic slots as generic tile shape + word label (no ARASAAC dependency — that's
-      separate polish work already tracked elsewhere).
+- [ ] Render dynamic slots as tile + word label, with an optional symbol from a static lucide-react
+      icon bank (`backend/src/context/symbols.py` / `src/symbols.ts`) in place of an ARASAAC
+      dependency, which remains separate polish work already tracked elsewhere.
 - [ ] Subtle highlight/pulse animation on newly-added tiles only (not a full-row flash).
 - [ ] Wire slot content to whatever prop shape Track E ends up passing — keep this a dumb
       presentational component so the data source is swappable.
@@ -71,8 +72,9 @@ frontend track.
 
 - [ ] New handler, e.g. `backend/src/context/app.py`, `POST /context/update`, taking
       `{summary, rawWindow, activityAnchor}` (mirrors the bounded payload Track B produces).
-- [ ] Returns `{summary, dynamicIcons: [{word}], flaggedMoment?: {label, icons}}` — one combined
-      call, not three, to keep token cost down.
+- [ ] Returns `{summary, dynamicIcons: [{word, symbol?}], flaggedMoment?: {label, icons}}` — one
+      combined call, not three, to keep token cost down. `symbol` is a bank id from
+      `backend/src/context/symbols.py`, omitted whenever no bank entry is a good literal match.
 - [ ] Prompt/schema for `dynamicIcons`: extract concrete nouns/verbs actually present in the raw
       window — same "no fabricated specifics" discipline as the existing `/expand` contract
       (PLAN.md:20).

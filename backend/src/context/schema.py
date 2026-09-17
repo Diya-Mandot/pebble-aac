@@ -6,8 +6,13 @@ omittable key -- Bedrock tool-use forces a fixed shape, so "no flagged moment" i
 layer (see common/bedrock.py's _transform_context_tool_output), right before the response leaves
 the Lambda. Fixtures are stored in this same raw, `present`-explicit shape so they can be validated
 against this schema directly (mirrors simplify/schema.py's validate_simplify_tool_output).
+
+Each `dynamicIcons` item's `symbol` field uses the same sentinel pattern: the model always emits a
+bank id or the literal string "none" (see ./symbols.py), and "none" is collapsed to an absent key
+at the same wiring-layer step, right before the response leaves the Lambda.
 """
 from ..common.icons import ICON_IDS
+from .symbols import SYMBOL_ENUM
 
 CONTEXT_TOOL_NAME = "emit_context_update"
 
@@ -38,8 +43,18 @@ CONTEXT_TOOL_SCHEMA = {
                 "maxItems": 6,
                 "items": {
                     "type": "object",
-                    "properties": {"word": {"type": "string", "minLength": 1}},
-                    "required": ["word"],
+                    "properties": {
+                        "word": {"type": "string", "minLength": 1},
+                        "symbol": {
+                            "type": "string",
+                            "enum": SYMBOL_ENUM,
+                            "description": (
+                                "Bank id that literally depicts the word in this context, or "
+                                "'none' when nothing fits well."
+                            ),
+                        },
+                    },
+                    "required": ["word", "symbol"],
                 },
             },
             "flaggedMoment": {
@@ -73,10 +88,13 @@ def _valid_dynamic_icons(items) -> bool:
         return False
     seen = set()
     for item in items:
-        if not isinstance(item, dict) or set(item.keys()) != {"word"}:
+        if not isinstance(item, dict) or set(item.keys()) != {"word", "symbol"}:
             return False
         word = item["word"]
+        symbol = item["symbol"]
         if not isinstance(word, str) or not word.strip():
+            return False
+        if not isinstance(symbol, str) or symbol not in SYMBOL_ENUM:
             return False
         normalized = word.strip().lower()
         if normalized in seen:
@@ -115,7 +133,7 @@ def validate_context_tool_output(candidate: dict) -> str | None:
         return "'summary' must be a string"
 
     if not _valid_dynamic_icons(candidate.get("dynamicIcons")):
-        return "'dynamicIcons' must be at most 6 unique {word} objects"
+        return "'dynamicIcons' must be at most 6 unique {word, symbol} objects"
 
     if not _valid_flagged_moment(candidate.get("flaggedMoment")):
         return "'flaggedMoment' must be {present, label, icons}, with label/icons empty iff present is false"

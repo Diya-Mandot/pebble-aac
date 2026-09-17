@@ -48,7 +48,12 @@ export interface SpeakResponse {
 
 export interface DynamicIconSlot {
   word: string
+  symbol?: string
 }
+
+export type SentenceToken =
+  | { kind: 'icon'; id: IconId }
+  | { kind: 'word'; word: string; symbol?: string }
 
 export interface FlaggedMoment {
   label: string

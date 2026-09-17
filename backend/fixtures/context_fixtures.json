@@ -12,9 +12,9 @@
     "response": {
       "summary": "The group is wiring a circuit; a peer warned not to touch a part that's still hot.",
       "dynamicIcons": [
-        { "word": "wire" },
-        { "word": "battery" },
-        { "word": "hot" }
+        { "word": "wire", "symbol": "cable" },
+        { "word": "battery", "symbol": "battery" },
+        { "word": "hot", "symbol": "flame" }
       ],
       "flaggedMoment": {
         "present": true,
@@ -36,9 +36,9 @@
     "response": {
       "summary": "The group is building a tower and needs one more piece; a peer asked Maya which block to use next.",
       "dynamicIcons": [
-        { "word": "tower" },
-        { "word": "block" },
-        { "word": "piece" }
+        { "word": "tower", "symbol": "building" },
+        { "word": "block", "symbol": "blocks" },
+        { "word": "piece", "symbol": "puzzle" }
       ],
       "flaggedMoment": {
         "present": true,
@@ -60,9 +60,9 @@
     "response": {
       "summary": "Peers are chatting about which color they like better while building.",
       "dynamicIcons": [
-        { "word": "blue" },
-        { "word": "red" },
-        { "word": "color" }
+        { "word": "blue", "symbol": "none" },
+        { "word": "red", "symbol": "none" },
+        { "word": "color", "symbol": "palette" }
       ],
       "flaggedMoment": {
         "present": false,
