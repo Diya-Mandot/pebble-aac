@@ -36,7 +36,11 @@ POST /simplify  {text:string}
              → {steps:[{icons:[IconID], label:string}], warnings:[{icons:[IconID], label:string}],
                 quickReplies:[QuickReplyID], transcript:string, status:"ok"|"please_repeat",
                 source:"mock"|"live"|"fallback", error?}
-POST /speak     {text:string} → {audioBase64, contentType:"audio/mpeg"}  # Polly; bundled prerecorded clip is the labeled fallback
+POST /speak     {text:string} → {audioBase64:string|null, contentType:"audio/mpeg", source:"live"|"fallback", error?}
+             # Polly; bundled prerecorded clip is the labeled fallback, but ONLY for the exact text it was recorded for.
+             # audioBase64 is null (with error set) when live synthesis fails AND the requested text doesn't match the
+             # bundled clip -- never plays a fallback clip that would speak different words than approved. Client: null
+             # means show the text only, never attempt playback.
 GET  /profile/{id} · POST /profile/{id}             # {vocabLevel, sentenceLength, tone, interests[]}
 ```
 `source` labels every /expand and /simplify response so canned/mock output is never disguised as live (see "Fallbacks are labeled" above).

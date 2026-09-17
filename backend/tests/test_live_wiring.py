@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from src.expand.app import lambda_handler as expand_handler
 from src.simplify.app import lambda_handler as simplify_handler
+from src.speak.app import lambda_handler as speak_handler
 
 
 EXPAND_EVENT = {
@@ -16,6 +17,7 @@ EXPAND_EVENT = {
     )
 }
 SIMPLIFY_EVENT = {"body": json.dumps({"text": "put the block on the table"})}
+SPEAK_EVENT = {"body": json.dumps({"text": "I'm done"})}
 
 
 class ExpandLiveWiringTest(unittest.TestCase):
@@ -95,6 +97,35 @@ class SimplifyLiveWiringTest(unittest.TestCase):
         self.assertEqual(body["warnings"], [])
         # Transcript must stay verbatim even on the live-call fallback path.
         self.assertEqual(body["transcript"], "put the block on the table")
+
+
+class SpeakLiveWiringTest(unittest.TestCase):
+    @patch("src.speak.app.invoke_speak")
+    def test_valid_response_is_labeled_live(self, mock_invoke):
+        mock_invoke.return_value = ("ZmFrZS1hdWRpbw==", "live")
+
+        result = speak_handler(SPEAK_EVENT, None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(body["source"], "live")
+        self.assertEqual(body["contentType"], "audio/mpeg")
+        self.assertEqual(body["audioBase64"], "ZmFrZS1hdWRpbw==")
+
+    @patch("src.speak.app.invoke_speak")
+    def test_failed_call_with_no_safe_fallback_returns_no_audio(self, mock_invoke):
+        # invoke_speak returns (None, "fallback") when the requested text doesn't match the one
+        # bundled recorded clip -- app.py must surface that as "no audio", never substitute
+        # anything, per the P1 fix (see common/polly.py's module docstring).
+        mock_invoke.return_value = (None, "fallback")
+
+        result = speak_handler(SPEAK_EVENT, None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(body["source"], "fallback")
+        self.assertIsNone(body["audioBase64"])
+        self.assertIn("error", body)
 
 
 if __name__ == "__main__":

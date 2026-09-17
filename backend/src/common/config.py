@@ -4,6 +4,12 @@ Verified 2026-09-16 against the hackathon AWS account (WSParticipantRole): most 
 blocked by an explicit deny policy (ws-deny-bedrock-models-policy-1) or not opted into for this
 event. anthropic.claude-sonnet-4-6 works, but ONLY via its inference profile ID (the "us." prefix)
 -- the bare model ID fails with "on-demand throughput isn't supported."
+
+Verified 2026-09-17 against the same hackathon AWS account: Polly's Kevin voice (en-US, male,
+"child") is entitled with the neural engine in us-east-1, confirmed via describe_voices and a live
+synthesize_speech call, plus scripts/generate_speak_fallback.py's real run (see
+backend/fixtures/speak_fallback.json for the generation record). No deny-policy issue here, unlike
+Bedrock's model restrictions above.
 """
 
 AWS_REGION = "us-east-1"
@@ -17,3 +23,10 @@ LAMBDA_TIMEOUT_SECONDS = 25
 BEDROCK_CONNECT_TIMEOUT_SECONDS = 2
 BEDROCK_READ_TIMEOUT_SECONDS = 8
 MAX_RETRIES = 1
+
+# Verified 2026-09-17 against the hackathon account -- see module docstring above.
+POLLY_VOICE_ID = "Kevin"
+POLLY_ENGINE = "neural"
+POLLY_OUTPUT_FORMAT = "mp3"
+POLLY_CONNECT_TIMEOUT_SECONDS = 2
+POLLY_READ_TIMEOUT_SECONDS = 8

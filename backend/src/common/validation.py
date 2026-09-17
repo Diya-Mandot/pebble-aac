@@ -46,6 +46,20 @@ def validate_simplify_request(payload: dict) -> str | None:
     return None
 
 
+MAX_SPEAK_TEXT_LENGTH = 500
+
+
+def validate_speak_request(payload: dict) -> str | None:
+    if not isinstance(payload, dict):
+        return "Request body must be a JSON object"
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return "'text' is required and must be a non-empty string"
+    if len(text) > MAX_SPEAK_TEXT_LENGTH:
+        return f"'text' exceeds {MAX_SPEAK_TEXT_LENGTH} characters"
+    return None
+
+
 MAX_CANDIDATE_TEXT_LENGTH = 200
 
 

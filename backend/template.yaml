@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Bridge AAC backend — /expand and /simplify (mock-backed for now)
+Description: Bridge AAC backend — /expand, /simplify, and /speak
 
 Globals:
   Function:
@@ -66,4 +66,25 @@ Resources:
           Properties:
             RestApiId: !Ref BridgeApi
             Path: /simplify
+            Method: post
+
+  SpeakFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src.speak.app.lambda_handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: polly:SynthesizeSpeech
+              # Polly has no per-voice/per-request ARNs to scope to (unlike Bedrock's
+              # inference-profile/foundation-model ARNs above) -- "*" is the standard/expected
+              # scope for polly:SynthesizeSpeech.
+              Resource: "*"
+      Events:
+        Speak:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BridgeApi
+            Path: /speak
             Method: post
