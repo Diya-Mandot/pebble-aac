@@ -47,6 +47,21 @@ substitute for real auth in a classroom deployment.
 ## Demo flow
 
 1. On **Maya's voice**, select **Confused**, **Build**, and **Help**.
-2. Choose **Create my message**, review the three interpretations, and approve one.
-3. On **Science team**, send: `take the red wire, connect it to the battery first, but make sure the switch is off`.
-4. Return to the student side to see the ordered steps, prominent safety check, transcript, and quick replies.
+2. Choose **Create my message**, review the three interpretations, and approve one -- it's spoken aloud.
+3. Click the mic button to start listening, then say aloud: `take the red wire, connect it to the battery first, but make sure the switch is off`.
+4. See the ordered steps (each one tappable to hear it again), a prominent safety check, the transcript, and quick replies -- plus the **Words from the conversation** row filling in with tappable context words.
+
+## Ambient context pipeline
+
+Click the mic button to start session-scoped listening (see `CONTEXT_PIPELINE_PLAN.md`). While
+listening, the app quietly builds a rolling conversation summary in the background and, at real
+topic shifts (not every utterance), calls the backend to refresh the **Words from the
+conversation** row under the board with a few concrete words actually said, each optionally paired
+with a small symbol from a fixed icon bank. This never happens per-utterance -- it's debounced by
+a minimum time gap and a local keyword-diff, so most turns cost nothing. Tap a word tile to add it
+to your message, exactly like the fixed vocabulary tiles above it.
+
+The **Help Maya understand** button is a separate, human-triggered affordance: it surfaces a
+flagged moment (a safety warning or a question addressed to Maya) only when one was actually
+detected, and only when Maya's teacher/aide chooses to look -- receptive help is never
+auto-surfaced onto the board.

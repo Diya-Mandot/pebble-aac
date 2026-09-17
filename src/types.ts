@@ -46,12 +46,30 @@ export interface SpeakResponse {
   error?: string
 }
 
-export interface ChatMessage {
-  id: string
-  sender: 'student' | 'peer' | 'system'
-  author: string
-  text: string
-  time: string
-  source?: ResponseSource
-  expandedFrom?: IconId[]
+export interface DynamicIconSlot {
+  word: string
+  symbol?: string
+}
+
+export type SentenceToken =
+  | { kind: 'icon'; id: IconId }
+  | { kind: 'word'; word: string; symbol?: string }
+
+export interface FlaggedMoment {
+  label: string
+  icons: IconId[]
+}
+
+export interface ContextUpdateRequest {
+  summary: string
+  rawWindow: { text: string; timestamp: number }[]
+  activityAnchor: string
+}
+
+export interface ContextUpdateResponse {
+  summary: string
+  dynamicIcons: DynamicIconSlot[]
+  flaggedMoment?: FlaggedMoment
+  source: ResponseSource
+  error?: string
 }

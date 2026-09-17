@@ -121,10 +121,12 @@ class ExpandContractTest(unittest.TestCase):
         self.mock_get_profile = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _event(self, icons=("CONFUSED", "BUILD", "HELP"), context="", profile_id="demo"):
+    def _event(self, icons=("CONFUSED", "BUILD", "HELP"), words=(), context="", profile_id="demo"):
+        tokens = [{"kind": "icon", "id": icon} for icon in icons]
+        tokens += [{"kind": "word", "word": word} for word in words]
         return {
             "body": json.dumps(
-                {"icons": list(icons), "context": context, "profileId": profile_id}
+                {"tokens": tokens, "context": context, "profileId": profile_id}
             )
         }
 
@@ -251,25 +253,164 @@ class ExpandContractTest(unittest.TestCase):
     def test_unknown_icon_id_returns_400(self):
         event = {
             "body": json.dumps(
-                {"icons": ["NOT_A_REAL_ICON"], "context": "", "profileId": "demo"}
+                {
+                    "tokens": [{"kind": "icon", "id": "NOT_A_REAL_ICON"}],
+                    "context": "",
+                    "profileId": "demo",
+                }
             )
-        }
-        result = expand_handler(event, None)
-        self.assertEqual(result["statusCode"], 400)
-
-    def test_non_string_icon_returns_400(self):
-        event = {
-            "body": json.dumps({"icons": [{}], "context": "", "profileId": "demo"})
         }
         result = expand_handler(event, None)
         self.assertEqual(result["statusCode"], 400)
 
     def test_missing_context_returns_400(self):
         event = {
-            "body": json.dumps({"icons": ["CONFUSED"], "profileId": "demo"})
+            "body": json.dumps(
+                {"tokens": [{"kind": "icon", "id": "CONFUSED"}], "profileId": "demo"}
+            )
         }
         result = expand_handler(event, None)
         self.assertEqual(result["statusCode"], 400)
+
+    def test_empty_tokens_returns_400(self):
+        result = expand_handler(self._event(icons=()), None)
+        self.assertEqual(result["statusCode"], 400)
+
+    def test_missing_tokens_returns_400(self):
+        event = {"body": json.dumps({"context": "", "profileId": "demo"})}
+        result = expand_handler(event, None)
+        self.assertEqual(result["statusCode"], 400)
+
+    def test_unknown_token_kind_returns_400(self):
+        event = {
+            "body": json.dumps(
+                {
+                    "tokens": [{"kind": "sound", "word": "beep"}],
+                    "context": "",
+                    "profileId": "demo",
+                }
+            )
+        }
+        result = expand_handler(event, None)
+        self.assertEqual(result["statusCode"], 400)
+
+    def test_extra_key_on_token_returns_400(self):
+        event = {
+            "body": json.dumps(
+                {
+                    "tokens": [{"kind": "icon", "id": "CONFUSED", "extra": True}],
+                    "context": "",
+                    "profileId": "demo",
+                }
+            )
+        }
+        result = expand_handler(event, None)
+        self.assertEqual(result["statusCode"], 400)
+
+    def test_too_many_word_tokens_returns_400(self):
+        result = expand_handler(self._event(icons=(), words=tuple(f"w{i}" for i in range(7))), None)
+        self.assertEqual(result["statusCode"], 400)
+
+    def test_oversized_word_token_returns_400(self):
+        result = expand_handler(self._event(icons=(), words=("x" * 41,)), None)
+        self.assertEqual(result["statusCode"], 400)
+
+    def test_case_duplicate_word_tokens_returns_400(self):
+        result = expand_handler(self._event(icons=(), words=("Battery", "battery")), None)
+        self.assertEqual(result["statusCode"], 400)
+
+    def test_non_string_word_token_returns_400(self):
+        event = {
+            "body": json.dumps(
+                {"tokens": [{"kind": "word", "word": 5}], "context": "", "profileId": "demo"}
+            )
+        }
+        result = expand_handler(event, None)
+        self.assertEqual(result["statusCode"], 400)
+
+    @patch("src.common.bedrock.get_client")
+    def test_word_only_tokens_succeed(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.converse.return_value = _tool_use_response(
+            [
+                {"id": "c1", "text": "I want the battery."},
+                {"id": "c2", "text": "Can I have the battery?"},
+                {"id": "c3", "text": "Battery, please."},
+            ]
+        )
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(self._event(icons=(), words=("battery",)), None)
+        self.assertEqual(result["statusCode"], 200)
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "live")
+
+    @patch("src.common.bedrock.get_client")
+    def test_scripted_icons_with_extra_word_falls_back_to_generic_not_scripted(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.converse.side_effect = _client_error("ThrottlingException")
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(
+            self._event(context=self.SCRIPTED_CONTEXT, words=("battery",)), None
+        )
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "fallback")
+        fixture = json.loads(EXPAND_FIXTURE_PATH.read_text(encoding="utf-8"))
+        scripted = fixture["profiles"]["demo"]["response"]["candidates"]
+        self.assertNotEqual(body["candidates"], scripted)
+        for candidate in body["candidates"]:
+            self.assertIn("battery", candidate["text"].lower())
+
+    @patch("src.common.bedrock.get_client")
+    def test_live_candidates_omitting_selected_word_are_rejected_then_fall_back(self, mock_get_client):
+        mock_client = MagicMock()
+        # Shape-valid, but neither candidate mentions "battery" -- must be treated like malformed
+        # output: retried once, then a deterministic fallback that does include the word.
+        omitting_word = [
+            {"id": "c1", "text": "I want to say something."},
+            {"id": "c2", "text": "Can we talk about this?"},
+            {"id": "c3", "text": "I'm trying to communicate."},
+        ]
+        mock_client.converse.side_effect = [
+            _tool_use_response(omitting_word),
+            _tool_use_response(omitting_word),
+        ]
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(self._event(icons=(), words=("battery",)), None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "fallback")
+        self.assertEqual(mock_client.converse.call_count, 2)
+        for candidate in body["candidates"]:
+            self.assertIn("battery", candidate["text"].lower())
+
+    @patch("src.common.bedrock.get_client")
+    def test_live_candidates_matching_word_case_insensitively_are_accepted(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.converse.return_value = _tool_use_response(
+            [
+                {"id": "c1", "text": "I want the Battery."},
+                {"id": "c2", "text": "Can I have the BATTERY?"},
+                {"id": "c3", "text": "battery, please."},
+            ]
+        )
+        mock_get_client.return_value = mock_client
+
+        result = expand_handler(self._event(icons=(), words=("battery",)), None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["source"], "live")
+
+    @patch("src.common.bedrock.get_client")
+    def test_tokens_serialize_in_order_to_the_prompt(self, mock_get_client):
+        mock_client = MagicMock()
+        mock_client.converse.return_value = _tool_use_response(VALID_CANDIDATES)
+        mock_get_client.return_value = mock_client
+
+        expand_handler(self._event(icons=("BUILD",), words=("battery",)), None)
+        prompt_text = mock_client.converse.call_args.kwargs["messages"][0]["content"][0]["text"]
+        tokens_json = prompt_text.split('"tokens":', 1)[1]
+        self.assertLess(tokens_json.index('"BUILD"'), tokens_json.index('"battery"'))
 
     @patch("src.common.bedrock.get_client")
     def test_saved_dynamodb_profile_traits_reach_the_bedrock_prompt(self, mock_get_client):

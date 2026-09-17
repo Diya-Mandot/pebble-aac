@@ -5,7 +5,7 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from src.common.validation import validate_expand_output
+from src.common.validation import validate_expand_candidates, validate_expand_output
 from src.expand.prompt import (
     EXPAND_OUTPUT_SCHEMA,
     EXPAND_SYSTEM_PROMPT,
@@ -94,21 +94,63 @@ class ExpandPromptTest(unittest.TestCase):
 
     def test_prompt_delimits_inputs_and_limits_personalization(self):
         profile = self.fixture["profiles"]["demo_alt"]["profile"]
-        prompt = build_expand_prompt(
-            self.fixture["request"]["icons"], self.fixture["request"]["context"], profile
-        )
+        tokens = [{"kind": "icon", "id": icon} for icon in self.fixture["request"]["icons"]]
+        prompt = build_expand_prompt(tokens, self.fixture["request"]["context"], profile)
         serialized = prompt.split("<expansion_request>", 1)[1].split(
             "</expansion_request>", 1
         )[0]
         prompt_data = json.loads(serialized)
 
-        self.assertEqual(prompt_data["icons"], ["CONFUSED", "BUILD", "HELP"])
+        self.assertEqual(prompt_data["tokens"], tokens)
         self.assertEqual(prompt_data["context"], "classroom group project")
         self.assertEqual(prompt_data["profile"], profile)
         self.assertIn("untrusted data", prompt)
         self.assertIn("never add content from the profile", prompt)
         self.assertIn("Interests may shape word", EXPAND_SYSTEM_PROMPT)
         self.assertIn("must never add content or facts", EXPAND_SYSTEM_PROMPT)
+
+    def test_prompt_describes_word_tokens_and_ordering(self):
+        self.assertIn("word", EXPAND_SYSTEM_PROMPT)
+        self.assertIn("given order", EXPAND_SYSTEM_PROMPT)
+        self.assertIn("verbatim", EXPAND_SYSTEM_PROMPT)
+
+    def test_tokens_serialize_with_ordered_kind_and_payload(self):
+        tokens = [{"kind": "word", "word": "battery"}, {"kind": "icon", "id": "HELP"}]
+        prompt = build_expand_prompt(tokens, "", {})
+        serialized = prompt.split("<expansion_request>", 1)[1].split(
+            "</expansion_request>", 1
+        )[0]
+        self.assertEqual(json.loads(serialized)["tokens"], tokens)
+
+
+class ValidateExpandCandidatesWordTest(unittest.TestCase):
+    VALID = [
+        {"id": "c1", "text": "I want the battery."},
+        {"id": "c2", "text": "Can I have the battery?"},
+        {"id": "c3", "text": "Battery, please."},
+    ]
+
+    def test_rejects_candidates_omitting_a_selected_word(self):
+        missing = [
+            {"id": "c1", "text": "I want to say something."},
+            {"id": "c2", "text": "Can we talk about this?"},
+            {"id": "c3", "text": "I'm trying to communicate."},
+        ]
+        self.assertIsNotNone(validate_expand_candidates(missing, ["battery"]))
+
+    def test_accepts_case_insensitive_word_boundary_match(self):
+        self.assertIsNone(validate_expand_candidates(self.VALID, ["battery"]))
+
+    def test_rejects_partial_word_match(self):
+        candidates = [
+            {"id": "c1", "text": "I have two batteries."},
+            {"id": "c2", "text": "The batteries are dead."},
+            {"id": "c3", "text": "Batteries, please."},
+        ]
+        self.assertIsNotNone(validate_expand_candidates(candidates, ["battery"]))
+
+    def test_no_words_required_is_unaffected(self):
+        self.assertIsNone(validate_expand_candidates(self.VALID, []))
 
 
 if __name__ == "__main__":

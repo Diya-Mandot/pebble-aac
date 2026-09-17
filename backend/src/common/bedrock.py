@@ -12,6 +12,7 @@ response against the JSON schema; invalid output gets 1 retry, then a labeled fa
 "Every AWS call has a hard fallback (canned JSON, labeled on screen)."
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -26,7 +27,10 @@ from .config import (
     BEDROCK_READ_TIMEOUT_SECONDS,
     MAX_RETRIES,
 )
-from .validation import validate_expand_candidates, validate_simplify_response
+from .validation import validate_context_response, validate_expand_candidates, validate_simplify_response
+from ..context.prompt import CONTEXT_SYSTEM_PROMPT, build_context_prompt
+from ..context.schema import CONTEXT_TOOL_NAME, CONTEXT_TOOL_SCHEMA, validate_context_tool_output
+from ..context.symbols import NO_SYMBOL
 from ..expand.prompt import EXPAND_SYSTEM_PROMPT, EXPAND_TOOL_CONFIG, EXPAND_TOOL_NAME, build_expand_prompt
 from ..simplify.prompt import SIMPLIFY_SYSTEM_PROMPT
 from ..simplify.schema import SIMPLIFY_TOOL_NAME, SIMPLIFY_TOOL_SCHEMA
@@ -64,8 +68,22 @@ def _log_failure(exc, attempt, endpoint="expand"):
     sys.stderr.write(f"[{endpoint}] Bedrock attempt {attempt} failed: {type(exc).__name__}\n")
 
 
-def _deterministic_fallback(icons):
-    words = ", ".join(icon.replace("_", " ").lower() for icon in icons)
+def _token_words(tokens):
+    """Renders an ordered token list as display words, icon tokens first-normalized the same way
+    the old icons-only fallback did. Order is preserved end-to-end so the fallback text reflects
+    the sequence the student actually built, not a regrouped icons-then-words rewrite."""
+    return [
+        token["id"].replace("_", " ").lower() if token["kind"] == "icon" else token["word"].strip().lower()
+        for token in tokens
+    ]
+
+
+def _words_from_tokens(tokens):
+    return [token["word"] for token in tokens if token["kind"] == "word"]
+
+
+def _deterministic_fallback(tokens):
+    words = ", ".join(_token_words(tokens))
     return [
         {"id": "c1", "text": f"I want to say: {words}."},
         {"id": "c2", "text": f"Can we talk about {words}?"},
@@ -89,8 +107,8 @@ def _extract_candidates(response):
     return tool_use.get("input", {}).get("candidates")
 
 
-def _call_once(icons, context, profile):
-    prompt = build_expand_prompt(icons, context, profile)
+def _call_once(tokens, context, profile):
+    prompt = build_expand_prompt(tokens, context, profile)
     response = get_client().converse(
         modelId=BEDROCK_MODEL_ID,
         system=[{"text": EXPAND_SYSTEM_PROMPT}],
@@ -101,14 +119,17 @@ def _call_once(icons, context, profile):
     return _extract_candidates(response)
 
 
-def invoke_expand(icons, context, profile, fallback_candidates, get_remaining_ms):
+def invoke_expand(tokens, context, profile, fallback_candidates, get_remaining_ms):
     """Returns (candidates, source). source is "live" on a validated Bedrock response, else
     "fallback". fallback_candidates is the caller-resolved scripted response for this exact
     icons/context/profile combination (see expand/app.py), or None if nothing was scripted for
-    it — in which case a generic, icon-derived response is used instead so the fallback never
+    it — in which case a generic, token-derived response is used instead so the fallback never
     invents specifics. get_remaining_ms is a zero-arg callable re-checked before each attempt (real
     Lambda context under API Gateway, or a lambda returning None under local_server.py's synthetic
-    invocation, which is treated as "assume enough time")."""
+    invocation, which is treated as "assume enough time"). A live response that omits a word the
+    student explicitly selected is treated the same as malformed output — validate_expand_candidates
+    checks every selected word is present, so an omission is logged, retried, then falls back."""
+    words = _words_from_tokens(tokens)
     attempts = 1 + MAX_RETRIES
     for attempt in range(1, attempts + 1):
         remaining_ms = get_remaining_ms()
@@ -117,7 +138,7 @@ def invoke_expand(icons, context, profile, fallback_candidates, get_remaining_ms
             break
 
         try:
-            candidates = _call_once(icons, context, profile)
+            candidates = _call_once(tokens, context, profile)
         except ClientError as exc:
             _log_failure(exc, attempt)
             if exc.response.get("Error", {}).get("Code") in PERMANENT_ERROR_CODES:
@@ -127,13 +148,13 @@ def invoke_expand(icons, context, profile, fallback_candidates, get_remaining_ms
             _log_failure(exc, attempt)
             continue
 
-        error = validate_expand_candidates(candidates)
+        error = validate_expand_candidates(candidates, words)
         if error is None:
             return candidates, "live"
         _log_failure(ValueError(error), attempt)
 
     if fallback_candidates is None:
-        fallback_candidates = _deterministic_fallback(icons)
+        fallback_candidates = _deterministic_fallback(tokens)
     return fallback_candidates, "fallback"
 
 
@@ -250,4 +271,172 @@ def invoke_simplify(text, get_remaining_ms):
     fallback = _scripted_simplify_fallback(text)
     if fallback is None:
         fallback = dict(PLEASE_REPEAT_FALLBACK)
+    return fallback, "fallback"
+
+
+# --- /context/update -------------------------------------------------------------------------
+# Bedrock tool-use can't express an omittable key, so the model always emits a `flaggedMoment`
+# object with an explicit `present` boolean (see context/schema.py); _transform_context_tool_output
+# below collapses that into an absent key the moment a candidate response validates, so nothing
+# downstream of this module ever sees the raw `present`-shaped object. Same closed-schema
+# defense-in-depth as SIMPLIFY_TOOL_CONFIG above: additionalProperties is pinned here even though
+# validate_context_response independently rejects extra keys.
+CONTEXT_TOOL_CONFIG = {
+    "tools": [
+        {
+            "toolSpec": {
+                "name": CONTEXT_TOOL_NAME,
+                "description": CONTEXT_TOOL_SCHEMA["description"],
+                "inputSchema": {
+                    "json": {**CONTEXT_TOOL_SCHEMA["input_schema"], "additionalProperties": False}
+                },
+            }
+        }
+    ],
+    "toolChoice": {"tool": {"name": CONTEXT_TOOL_NAME}},
+}
+
+CONTEXT_FIXTURES_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "context_fixtures.json"
+
+# Fallback dynamic-icon extraction only considers words at least this long, so short connective
+# words ("the", "for") never crowd out the topic-bearing ones when Bedrock is unavailable.
+_CONTEXT_FALLBACK_MIN_WORD_LENGTH = 4
+_CONTEXT_FALLBACK_STOPWORDS = {
+    "that", "this", "with", "have", "just", "were", "been", "from", "they", "what",
+    "when", "where", "which", "about", "there", "their", "your", "yours", "dont",
+    "cant", "wont", "then", "than", "also", "like", "okay", "yeah", "gonna", "wanna",
+    "really", "think", "maybe", "still", "into", "over", "some", "want", "need",
+}
+_CONTEXT_WORD_RE = re.compile(r"[a-zA-Z']+")
+
+
+def _load_context_fixtures():
+    return json.loads(CONTEXT_FIXTURES_PATH.read_text(encoding="utf-8"))
+
+
+def _normalize_window(raw_window):
+    return tuple(_normalize(turn["text"]) for turn in raw_window)
+
+
+def _transform_context_tool_output(raw: dict) -> dict:
+    """Collapses the raw, `present`-explicit tool shape into the final API response shape,
+    dropping `flaggedMoment` entirely when the model (or a fixture) didn't flag anything, and
+    dropping each dynamicIcons item's `symbol` when it's the "none" sentinel."""
+    flagged = raw["flaggedMoment"]
+    dynamic_icons = [
+        {"word": item["word"]} if item["symbol"] == NO_SYMBOL else {"word": item["word"], "symbol": item["symbol"]}
+        for item in raw["dynamicIcons"]
+    ]
+    response = {"summary": raw["summary"], "dynamicIcons": dynamic_icons}
+    if flagged["present"]:
+        response["flaggedMoment"] = {"label": flagged["label"], "icons": flagged["icons"]}
+    return response
+
+
+def _scripted_context_fallback(raw_window, activity_anchor):
+    normalized_window = _normalize_window(raw_window)
+    normalized_anchor = _normalize(activity_anchor)
+    for fixture in _load_context_fixtures():
+        request = fixture["request"]
+        if (
+            _normalize_window(request["rawWindow"]) == normalized_window
+            and _normalize(request["activityAnchor"]) == normalized_anchor
+        ):
+            return _transform_context_tool_output(dict(fixture["response"]))
+    return None
+
+
+def _generic_context_fallback(summary, raw_window):
+    """Deterministic, transcript-derived fallback for unscripted requests: summary passes through
+    unchanged (there's no safe way to regenerate it without a live call), dynamicIcons are the
+    first few sufficiently-long words actually present in the raw window, and flaggedMoment is
+    always omitted -- inventing a flag the room didn't actually raise is worse than missing one.
+    No `symbol` is ever assigned here either: picking a symbol requires judgment about how a word
+    depicts something in context, which this deterministic path can't safely do."""
+    words = []
+    seen = set()
+    for turn in raw_window:
+        for match in _CONTEXT_WORD_RE.findall(turn.get("text", "")):
+            normalized = match.strip("'").lower()
+            if (
+                len(normalized) < _CONTEXT_FALLBACK_MIN_WORD_LENGTH
+                or normalized in _CONTEXT_FALLBACK_STOPWORDS
+                or normalized in seen
+            ):
+                continue
+            seen.add(normalized)
+            words.append(normalized)
+            if len(words) == 6:
+                break
+        if len(words) == 6:
+            break
+    return {"summary": summary, "dynamicIcons": [{"word": word.capitalize()} for word in words]}
+
+
+def _extract_context_response(response):
+    if response.get("stopReason") != "tool_use":
+        raise ValueError(f"Unexpected stopReason: {response.get('stopReason')}")
+
+    content = response.get("output", {}).get("message", {}).get("content", [])
+    tool_use_blocks = [block["toolUse"] for block in content if "toolUse" in block]
+    if len(tool_use_blocks) != 1:
+        raise ValueError(f"Expected exactly one toolUse block, got {len(tool_use_blocks)}")
+
+    tool_use = tool_use_blocks[0]
+    if tool_use.get("name") != CONTEXT_TOOL_NAME:
+        raise ValueError(f"Unexpected tool name: {tool_use.get('name')}")
+
+    return tool_use.get("input")
+
+
+def _call_context_once(summary, raw_window, activity_anchor):
+    prompt = build_context_prompt(summary, raw_window, activity_anchor)
+    response = get_client().converse(
+        modelId=BEDROCK_MODEL_ID,
+        system=[{"text": CONTEXT_SYSTEM_PROMPT}],
+        messages=[{"role": "user", "content": [{"text": prompt}]}],
+        inferenceConfig={"maxTokens": 400, "temperature": 0.2},
+        toolConfig=CONTEXT_TOOL_CONFIG,
+    )
+    return _extract_context_response(response)
+
+
+def invoke_context(summary, raw_window, activity_anchor, get_remaining_ms):
+    """Returns (response, source). response is the final {summary, dynamicIcons, flaggedMoment?}
+    shape. source is "live" on a validated Bedrock response, else "fallback" -- either the scripted
+    fixture for an exact-matched rawWindow/activityAnchor, or a deterministic transcript-derived
+    response for everything else, since inventing icons or a flagged moment for unscripted speech
+    would risk misrepresenting what was actually said."""
+    attempts = 1 + MAX_RETRIES
+    for attempt in range(1, attempts + 1):
+        remaining_ms = get_remaining_ms()
+        if remaining_ms is not None and remaining_ms < MIN_MS_FOR_ATTEMPT:
+            _log_failure(TimeoutError("insufficient remaining Lambda time"), attempt, "context")
+            break
+
+        try:
+            raw = _call_context_once(summary, raw_window, activity_anchor)
+        except ClientError as exc:
+            _log_failure(exc, attempt, "context")
+            if exc.response.get("Error", {}).get("Code") in PERMANENT_ERROR_CODES:
+                break
+            continue
+        except Exception as exc:  # network errors, timeouts, malformed tool output, etc.
+            _log_failure(exc, attempt, "context")
+            continue
+
+        schema_error = validate_context_tool_output(raw)
+        if schema_error is not None:
+            _log_failure(ValueError(schema_error), attempt, "context")
+            continue
+
+        transformed = _transform_context_tool_output(raw)
+        response_error = validate_context_response(transformed)
+        if response_error is None:
+            return transformed, "live"
+        _log_failure(ValueError(response_error), attempt, "context")
+
+    fallback = _scripted_context_fallback(raw_window, activity_anchor)
+    if fallback is None:
+        fallback = _generic_context_fallback(summary, raw_window)
     return fallback, "fallback"

@@ -1,0 +1,74 @@
+[
+  {
+    "description": "wiring safety warning -- flaggedMoment must fire with STOP/CHECK",
+    "request": {
+      "summary": "",
+      "rawWindow": [
+        { "text": "okay next connect the red wire to the battery", "timestamp": 1000 },
+        { "text": "wait, don't touch that part, it's still hot", "timestamp": 2000 }
+      ],
+      "activityAnchor": "circuits lab"
+    },
+    "response": {
+      "summary": "The group is wiring a circuit; a peer warned not to touch a part that's still hot.",
+      "dynamicIcons": [
+        { "word": "wire", "symbol": "cable" },
+        { "word": "battery", "symbol": "battery" },
+        { "word": "hot", "symbol": "flame" }
+      ],
+      "flaggedMoment": {
+        "present": true,
+        "label": "Don't touch, it's still hot",
+        "icons": ["STOP", "CHECK"]
+      }
+    }
+  },
+  {
+    "description": "name-addressed direct question -- flaggedMoment must fire with QUESTION",
+    "request": {
+      "summary": "",
+      "rawWindow": [
+        { "text": "we need one more piece for the tower", "timestamp": 1000 },
+        { "text": "Maya, which block do you want to use next?", "timestamp": 2000 }
+      ],
+      "activityAnchor": "block building"
+    },
+    "response": {
+      "summary": "The group is building a tower and needs one more piece; a peer asked Maya which block to use next.",
+      "dynamicIcons": [
+        { "word": "tower", "symbol": "building" },
+        { "word": "block", "symbol": "blocks" },
+        { "word": "piece", "symbol": "puzzle" }
+      ],
+      "flaggedMoment": {
+        "present": true,
+        "label": "Which block do you want next?",
+        "icons": ["QUESTION"]
+      }
+    }
+  },
+  {
+    "description": "ordinary aside -- neither safety nor addressed question, flaggedMoment must not fire",
+    "request": {
+      "summary": "",
+      "rawWindow": [
+        { "text": "I think the blue one looks cooler than the red one", "timestamp": 1000 },
+        { "text": "yeah blue is my favorite color too", "timestamp": 2000 }
+      ],
+      "activityAnchor": "block building"
+    },
+    "response": {
+      "summary": "Peers are chatting about which color they like better while building.",
+      "dynamicIcons": [
+        { "word": "blue", "symbol": "none" },
+        { "word": "red", "symbol": "none" },
+        { "word": "color", "symbol": "palette" }
+      ],
+      "flaggedMoment": {
+        "present": false,
+        "label": "",
+        "icons": []
+      }
+    }
+  }
+]

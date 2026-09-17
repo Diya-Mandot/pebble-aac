@@ -1,9 +1,11 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   BadgeCheck,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleHelp,
   Clock3,
   Ear,
@@ -16,29 +18,33 @@ import {
   MousePointerClick,
   OctagonX,
   Puzzle,
+  Repeat,
   RotateCcw,
   ScanSearch,
-  Send,
   Shell,
   Sun,
   Sparkles,
   ThumbsDown,
   ThumbsUp,
   Trash2,
-  Users,
   Volume2,
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { expandMessage, simplifyMessage, speakMessage } from './api'
+import { expandMessage, fetchContextUpdate, simplifyMessage, speakMessage } from './api'
 import type {
   Candidate,
-  ChatMessage,
+  DynamicIconSlot,
+  FlaggedMoment,
   IconId,
   QuickReplyId,
   ResponseSource,
+  SentenceToken,
   SimplifyResponse,
 } from './types'
+import { emitTurn, onTurn } from './turnEmitter'
+import { ConversationBuffer } from './conversationBuffer'
+import { symbolIcon } from './symbols'
 
 type IconDefinition = {
   id: IconId
@@ -49,7 +55,7 @@ type IconDefinition = {
 }
 
 const ICONS: IconDefinition[] = [
-  { id: 'CONFUSED', label: 'Confused', helper: "I don't understand", icon: CircleHelp, tone: 'lavender' },
+  { id: 'CONFUSED', label: 'Repeat', helper: 'Say it again', icon: Repeat, tone: 'lavender' },
   { id: 'IDEA', label: 'I have an idea', helper: 'I want to share', icon: Lightbulb, tone: 'sun' },
   { id: 'BUILD', label: 'Build', helper: 'Make or put together', icon: Puzzle, tone: 'blue' },
   { id: 'HELP', label: 'Help', helper: 'I need support', icon: HandHelping, tone: 'teal' },
@@ -76,63 +82,29 @@ const feelings = [
   { label: 'Low energy' },
 ]
 
-// Each student is a distinct workspace identity (own name, avatar, chat history, icon selections)
-// backed 1:1 by one of backend/fixtures/expand_default.json's real profiles -- profileId doubles as
-// studentId, which is safe here specifically because each profileId already represents exactly one
-// persona's personalization settings, never a style shared across people.
-const STUDENTS = [
-  { id: 'demo', name: 'Maya', avatarInitial: 'M', traits: 'Short sentences · likes making things' },
-  { id: 'demo_alt', name: 'Theo', avatarInitial: 'T', traits: 'Developing wording · likes science & puzzles' },
+// Style-labeled, not person-named -- this is one student (Maya, see the heading/avatar/message
+// author below) with different personalization settings, not two different people. Mirrors
+// backend/fixtures/expand_default.json's "demo"/"demo_alt" profiles 1:1.
+const PROFILES = [
+  { id: 'demo', label: 'Simple & direct', traits: 'Short sentences · likes making things' },
+  { id: 'demo_alt', label: 'Curious & exploring', traits: 'Developing wording · likes science & puzzles' },
 ]
 
-const initialMessages: ChatMessage[] = [
-  {
-    id: 'welcome',
-    sender: 'system',
-    author: 'Pebble',
-    text: 'Science team is ready. Take your time—everyone gets a turn.',
-    time: 'Now',
-  },
-  {
-    id: 'peer-welcome',
-    sender: 'peer',
-    author: 'Jordan',
-    text: "Let's figure out the circuit together. What should we try first?",
-    time: '10:24 AM',
-  },
-]
+// Slot count is fixed (design rule: the dynamic row's slot positions never move, only their
+// labels). Track D's dynamicIcons list is at most 6 items, most-relevant first -- mapped directly
+// onto these positions, padded with nulls for any unfilled slot.
+const DYNAMIC_ICON_SLOT_COUNT = 6
+const EMPTY_DYNAMIC_ICONS: (DynamicIconSlot | null)[] = Array(DYNAMIC_ICON_SLOT_COUNT).fill(null)
 
-// Per-student state that must not bleed between students when switching -- everything else
-// (loading flags, mic state, active mobile panel, toasts) is transient UI chrome shared across
-// whichever student is currently active.
-type StudentSession = {
-  messages: ChatMessage[]
-  selectedIcons: IconId[]
-  context: string
-  feeling: string
-  candidates: Candidate[]
-  candidateSource: ResponseSource | null
-  peerText: string
-  simplified: SimplifyResponse | null
-  transcriptExpanded: boolean
-}
-
-const makeInitialSession = (): StudentSession => ({
-  messages: initialMessages,
-  selectedIcons: [],
-  context: contexts[0].value,
-  feeling: feelings[0].label,
-  candidates: [],
-  candidateSource: null,
-  peerText: '',
-  simplified: null,
-  transcriptExpanded: false,
-})
-
-const timeNow = () =>
-  new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit' }).format(new Date())
+const toDynamicSlots = (icons: DynamicIconSlot[]): (DynamicIconSlot | null)[] =>
+  Array.from({ length: DYNAMIC_ICON_SLOT_COUNT }, (_, index) => icons[index] ?? null)
 
 const iconById = (id: IconId) => ICONS.find((item) => item.id === id) ?? ICONS[6]
+
+const normalizeWord = (word: string) => word.trim().toLowerCase()
+
+const tokenKey = (token: SentenceToken) =>
+  token.kind === 'icon' ? `icon:${token.id}` : `word:${normalizeWord(token.word)}`
 
 function AacIcon({ id, size = 18 }: { id: IconId; size?: number }) {
   const Icon = iconById(id).icon
@@ -166,79 +138,118 @@ function MiniIcons({ ids }: { ids: IconId[] }) {
   )
 }
 
-function App() {
-  const [sessions, setSessions] = useState<Record<string, StudentSession>>(() =>
-    Object.fromEntries(STUDENTS.map((student) => [student.id, makeInitialSession()])),
+// Dumb presentational component -- slot content is swappable (fake data now, Track D's response
+// once Track E wires it up). Position/count of slots is fixed; only the word in each slot changes.
+// Keying each tile by its slot index + word makes React remount only the tile whose word actually
+// changed, so the CSS mount animation naturally pulses just that tile instead of the whole row --
+// tapping a filled tile toggles it into the sentence tray below, same as the fixed vocabulary tiles.
+function DynamicIconRow({
+  slots,
+  selectedWordKeys,
+  onToggle,
+}: {
+  slots: (DynamicIconSlot | null)[]
+  selectedWordKeys: Set<string>
+  onToggle: (slot: DynamicIconSlot) => void
+}) {
+  return (
+    <div className="dynamic-row" role="group" aria-label="Words from the conversation">
+      {slots.map((slot, index) => {
+        if (!slot) {
+          return (
+            <div className="dynamic-tile empty" key={`${index}-empty`} aria-hidden="true">
+              <span className="dynamic-tile-placeholder" />
+            </div>
+          )
+        }
+        const Icon = symbolIcon(slot.symbol)
+        const isSelected = selectedWordKeys.has(normalizeWord(slot.word))
+        return (
+          <button
+            type="button"
+            className={`dynamic-tile filled ${isSelected ? 'selected' : ''}`}
+            aria-pressed={isSelected}
+            key={`${index}-${slot.word}`}
+            onClick={() => onToggle(slot)}
+          >
+            {Icon && (
+              <span className="dynamic-symbol">
+                <Icon size={18} strokeWidth={2.2} aria-hidden="true" />
+              </span>
+            )}
+            <strong>{slot.word}</strong>
+          </button>
+        )
+      })}
+    </div>
   )
-  const [activeStudentId, setActiveStudentId] = useState(STUDENTS[0].id)
-  const activeStudent = STUDENTS.find((student) => student.id === activeStudentId) ?? STUDENTS[0]
-  const session = sessions[activeStudentId]
+}
 
-  const updateSession = (
-    patch: Partial<StudentSession> | ((current: StudentSession) => Partial<StudentSession>),
-  ) => {
-    setSessions((current) => {
-      const prev = current[activeStudentId]
-      const delta = typeof patch === 'function' ? patch(prev) : patch
-      return { ...current, [activeStudentId]: { ...prev, ...delta } }
-    })
-  }
-
+function App() {
+  const [sentence, setSentence] = useState<SentenceToken[]>([])
+  const [context, setContext] = useState(contexts[0].value)
+  const [feeling, setFeeling] = useState(feelings[0].label)
+  const [profileId, setProfileId] = useState(PROFILES[0].id)
+  const [candidates, setCandidates] = useState<Candidate[]>([])
+  const [candidateSource, setCandidateSource] = useState<ResponseSource | null>(null)
+  const [expanded, setExpanded] = useState(false)
   const [isExpanding, setIsExpanding] = useState(false)
+  // Interim (not-yet-final) speech text, shown next to the mic as a live caption only -- it's
+  // never sent anywhere; each finalized chunk is what actually drives simplify/context below.
+  const [liveCaption, setLiveCaption] = useState('')
   const [isSimplifying, setIsSimplifying] = useState(false)
+  // Every finalized utterance produces one instruction card, but they never overwrite each other --
+  // that was overwhelming the student when a new one popped in mid-read. Instead each result queues
+  // up here, and only left/right navigation or clicking "Done" moves which one is on screen.
+  const [instructionQueue, setInstructionQueue] = useState<SimplifyResponse[]>([])
+  const [instructionIndex, setInstructionIndex] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
+  const [dynamicIcons, setDynamicIcons] = useState<(DynamicIconSlot | null)[]>(EMPTY_DYNAMIC_ICONS)
+  // Usually null -- Track D's flaggedMoment is omitted whenever the call is ambiguous, and even
+  // when present it's only ever surfaced through the human-triggered button below (design rule:
+  // receptive help is never auto-pushed).
+  const [flaggedMoment, setFlaggedMoment] = useState<FlaggedMoment | null>(null)
+  const [showFlaggedMoment, setShowFlaggedMoment] = useState(false)
+  const conversationBufferRef = useRef(new ConversationBuffer())
+  const lastApprovedMessageRef = useRef<string | null>(null)
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const [activeMobilePanel, setActiveMobilePanel] = useState<'student' | 'group'>('student')
-  const composerRef = useRef<HTMLTextAreaElement>(null)
-  const workspaceRef = useRef<HTMLElement>(null)
-  const resizingRef = useRef(false)
+  // True whenever the student wants the session-scoped listening to keep going -- distinguishes an
+  // explicit stop from the browser's forced onend (Web Speech API drops the connection ~every 60s),
+  // so onend knows whether to auto-restart or actually end the session.
+  const wantsListeningRef = useRef(false)
+  // Guards against overlapping /simplify calls from the recognition callback (a stable closure that
+  // can't read fresh state) -- set alongside isSimplifying so both the gate and the UI stay in sync.
+  const isSimplifyingRef = useRef(false)
 
-  const CHAT_MIN_WIDTH_PX = 360
-  const CHAT_MAX_WIDTH_PCT = 50
-  const [chatWidthPct, setChatWidthPct] = useState(46)
+  // Wires Track A's continuous-listening turns into Track B's buffer, and -- only when its
+  // debounce/topic-shift gate actually fires -- into Track D's live endpoint. Re-subscribes when
+  // `context` (the activity anchor) changes so a fresh request always carries the current anchor;
+  // it doesn't reset the buffer itself, since switching the anchor mid-conversation shouldn't
+  // throw away turns already captured.
+  useEffect(() => {
+    const unsubscribe = onTurn((turn) => {
+      const buffer = conversationBufferRef.current
+      buffer.addTurn(turn)
+      const payload = buffer.maybeRequestRefresh(context, lastApprovedMessageRef.current)
+      if (!payload) return
 
-  const clampChatWidthPct = (pct: number, containerWidth: number) => {
-    const minPct = containerWidth ? (CHAT_MIN_WIDTH_PX / containerWidth) * 100 : 0
-    return Math.min(CHAT_MAX_WIDTH_PCT, Math.max(minPct, pct))
-  }
-
-  const updateChatWidthFromPointer = (clientX: number) => {
-    const rect = workspaceRef.current?.getBoundingClientRect()
-    if (!rect || !rect.width) return
-    const distanceFromRight = rect.right - clientX
-    const pct = (distanceFromRight / rect.width) * 100
-    setChatWidthPct(clampChatWidthPct(pct, rect.width))
-  }
-
-  const handleResizerPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    resizingRef.current = true
-    event.currentTarget.setPointerCapture(event.pointerId)
-    event.currentTarget.classList.add('active')
-  }
-
-  const handleResizerPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!resizingRef.current) return
-    updateChatWidthFromPointer(event.clientX)
-  }
-
-  const handleResizerPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    resizingRef.current = false
-    event.currentTarget.classList.remove('active')
-  }
-
-  const handleResizerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    const rect = workspaceRef.current?.getBoundingClientRect()
-    if (!rect || !rect.width) return
-    const step = 2
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      event.preventDefault()
-      const direction = event.key === 'ArrowLeft' ? 1 : -1
-      setChatWidthPct((current) => clampChatWidthPct(current + direction * step, rect.width))
-    }
-  }
+      fetchContextUpdate({
+        summary: payload.summary,
+        rawWindow: payload.rawWindow,
+        activityAnchor: payload.activityAnchor,
+      })
+        .then((response) => {
+          setDynamicIcons(toDynamicSlots(response.dynamicIcons))
+          setFlaggedMoment(response.flaggedMoment ?? null)
+        })
+        .catch(() => {
+          // Never guess: a failed call just means no update this cycle, not a fabricated one.
+        })
+    })
+    return unsubscribe
+  }, [context])
 
   // Guards against a pending /expand response landing after the state it was requested for has
   // already changed (icon edits, profile switch, context change, or Reset while a request is in
@@ -250,49 +261,52 @@ function App() {
     setIsExpanding(false)
   }
 
-  const selectedDefinitions = useMemo(
-    () => session.selectedIcons.map((id) => iconById(id)),
-    [session.selectedIcons],
+  const selectedWordKeys = useMemo(
+    () => new Set(sentence.filter((token) => token.kind === 'word').map((token) => normalizeWord(token.word))),
+    [sentence],
   )
 
-  const toggleIcon = (id: IconId) => {
+  const toggleToken = (token: SentenceToken) => {
     invalidatePendingRequest()
-    updateSession((current) => ({
-      candidates: [],
-      candidateSource: null,
-      selectedIcons: current.selectedIcons.includes(id)
-        ? current.selectedIcons.filter((item) => item !== id)
-        : [...current.selectedIcons, id],
-    }))
+    setCandidates([])
+    setCandidateSource(null)
+    setSentence((current) => {
+      const key = tokenKey(token)
+      if (current.some((item) => tokenKey(item) === key)) {
+        return current.filter((item) => tokenKey(item) !== key)
+      }
+      return [...current, token]
+    })
   }
 
-  const switchStudent = (id: string) => {
-    if (id === activeStudentId) return
+  const toggleIcon = (id: IconId) => toggleToken({ kind: 'icon', id })
+  const toggleWord = (slot: DynamicIconSlot) => toggleToken({ kind: 'word', word: slot.word, symbol: slot.symbol })
+
+  const switchProfile = (id: string) => {
     invalidatePendingRequest()
-    recognitionRef.current?.stop()
-    setActiveStudentId(id)
-    setActiveMobilePanel('student')
+    setCandidates([])
+    setCandidateSource(null)
+    setProfileId(id)
   }
 
   const changeContext = (value: string) => {
     invalidatePendingRequest()
-    updateSession({ candidates: [], candidateSource: null, context: value })
+    setCandidates([])
+    setCandidateSource(null)
+    setContext(value)
   }
 
-  const setFeeling = (value: string) => updateSession({ feeling: value })
-
   const makeMessage = async () => {
-    const { selectedIcons, context } = session
-    if (!selectedIcons.length) return
+    if (!sentence.length) return
     invalidatePendingRequest()
     const requestId = requestIdRef.current
-    const profileId = activeStudentId
     setIsExpanding(true)
-    updateSession({ candidates: [] })
-    const response = await expandMessage(selectedIcons, context, profileId)
+    setCandidates([])
+    const response = await expandMessage(sentence, context, profileId)
     if (requestIdRef.current !== requestId) return // superseded; loading state already handled at invalidation time
     setIsExpanding(false)
-    updateSession({ candidates: response.candidates, candidateSource: response.source })
+    setCandidates(response.candidates)
+    setCandidateSource(response.source)
   }
 
   const speakText = (text: string) => {
@@ -321,40 +335,53 @@ function App() {
   }
 
   const approveCandidate = (candidate: Candidate) => {
-    updateSession((current) => ({
-      messages: [
-        ...current.messages,
-        {
-          id: crypto.randomUUID(),
-          sender: 'student',
-          author: activeStudent.name,
-          text: candidate.text,
-          time: timeNow(),
-          source: current.candidateSource ?? undefined,
-          expandedFrom: [...current.selectedIcons],
-        },
-      ],
-      selectedIcons: [],
-      candidates: [],
-      candidateSource: null,
-    }))
-    setActiveMobilePanel('group')
-    setNotice('Your message was shared with the group.')
+    lastApprovedMessageRef.current = candidate.text
+    setSentence([])
+    setCandidates([])
+    setCandidateSource(null)
+    setNotice('Your message was spoken aloud.')
     window.setTimeout(() => setNotice(null), 3200)
 
     speakText(candidate.text)
   }
 
-  const toggleVoiceInput = () => {
-    if (isListening) {
-      recognitionRef.current?.stop()
-      return
-    }
+  // Runs /simplify against one finalized utterance from the room -- this is what the "Following
+  // along" card below now depends on, replacing the old typed-and-sent composer flow entirely.
+  // Guarded by a ref (not the isSimplifying state) because this is called from inside the
+  // recognition.onresult closure, which doesn't get fresh state across renders.
+  const runSimplifyForTurn = async (text: string) => {
+    if (isSimplifyingRef.current) return
+    isSimplifyingRef.current = true
+    setIsSimplifying(true)
+    setLiveCaption('')
+    const response = await simplifyMessage(text)
+    // Only jump the view to this new instruction if nothing was queued yet (first one this
+    // session). Otherwise it joins the back of the queue and waits for the student to page to it.
+    setInstructionQueue((queue) => {
+      if (queue.length === 0) setInstructionIndex(0)
+      return [...queue, response]
+    })
+    setIsSimplifying(false)
+    isSimplifyingRef.current = false
+  }
 
+  const currentInstruction = instructionQueue[instructionIndex] ?? null
+  const hasOlderInstruction = instructionIndex > 0
+  const hasNewerInstruction = instructionIndex < instructionQueue.length - 1
+
+  const goToInstruction = (delta: number) => {
+    setInstructionIndex((index) => {
+      const next = index + delta
+      return Math.min(Math.max(next, 0), instructionQueue.length - 1)
+    })
+  }
+
+  const startRecognition = () => {
     const SpeechRecognitionCtor = window.SpeechRecognition ?? window.webkitSpeechRecognition
     if (!SpeechRecognitionCtor) {
-      setNotice('Voice input needs Chrome or Edge. Type your message for now.')
+      setNotice('Voice input needs Chrome or Edge.')
       window.setTimeout(() => setNotice(null), 3200)
+      wantsListeningRef.current = false
       return
     }
 
@@ -362,26 +389,39 @@ function App() {
     recognition.lang = 'en-US'
     recognition.continuous = true
     recognition.interimResults = true
-    let finalText = ''
 
     recognition.onresult = (event) => {
       let interim = ''
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
         const chunk = event.results[i][0].transcript
-        if (event.results[i].isFinal) finalText += `${chunk} `
-        else interim += chunk
+        if (event.results[i].isFinal) {
+          const text = chunk.trim()
+          if (text) {
+            emitTurn({ text, timestamp: Date.now() })
+            void runSimplifyForTurn(text)
+          }
+        } else {
+          interim += chunk
+        }
       }
-      updateSession({ peerText: `${finalText}${interim}`.trim() })
+      setLiveCaption(interim.trim())
     }
 
     recognition.onerror = () => {
-      setNotice("Didn't catch that. Try again or type your message.")
+      setNotice("Didn't catch that. Keep listening or try again.")
       window.setTimeout(() => setNotice(null), 3200)
     }
 
+    // The browser forces onend roughly every 60s even mid-session. If the student never asked to
+    // stop, treat this as a transparent hiccup and restart immediately rather than ending the
+    // listening session and requiring another click.
     recognition.onend = () => {
-      setIsListening(false)
       recognitionRef.current = null
+      if (wantsListeningRef.current) {
+        startRecognition()
+        return
+      }
+      setIsListening(false)
     }
 
     recognitionRef.current = recognition
@@ -389,45 +429,45 @@ function App() {
     recognition.start()
   }
 
-  const sendPeerMessage = async () => {
-    const text = session.peerText.trim()
-    if (!text || isSimplifying) return
+  const toggleVoiceInput = () => {
+    if (isListening) {
+      wantsListeningRef.current = false
+      recognitionRef.current?.stop()
+      return
+    }
 
-    recognitionRef.current?.stop()
-
-    updateSession((current) => ({
-      messages: [
-        ...current.messages,
-        { id: crypto.randomUUID(), sender: 'peer', author: 'Jordan', text, time: timeNow() },
-      ],
-      peerText: '',
-    }))
-    setIsSimplifying(true)
-    setActiveMobilePanel('student')
-    const response = await simplifyMessage(text)
-    updateSession({ simplified: response })
-    setIsSimplifying(false)
+    setLiveCaption('')
+    wantsListeningRef.current = true
+    startRecognition()
   }
 
   const sendQuickReply = (reply: QuickReplyId) => {
     const text = reply === 'DONE' ? "I'm done!" : 'I still need some help.'
-    updateSession((current) => ({
-      messages: [
-        ...current.messages,
-        { id: crypto.randomUUID(), sender: 'student', author: activeStudent.name, text, time: timeNow() },
-      ],
-    }))
-    setNotice('Your reply was shared.')
-    setActiveMobilePanel('group')
+    speakText(text)
+    setNotice('Your reply was spoken aloud.')
     window.setTimeout(() => setNotice(null), 2800)
+
+    // Marking an instruction done moves on to whatever's next in the queue -- if nothing is
+    // queued yet, stay put rather than running off the end.
+    if (reply === 'DONE') goToInstruction(1)
   }
 
   const resetDemo = () => {
     invalidatePendingRequest()
-    recognitionRef.current?.stop()
-    setSessions(Object.fromEntries(STUDENTS.map((student) => [student.id, makeInitialSession()])))
-    setActiveStudentId(STUDENTS[0].id)
-    setActiveMobilePanel('student')
+    setSentence([])
+    setCandidates([])
+    setCandidateSource(null)
+    setInstructionQueue([])
+    setInstructionIndex(0)
+    setLiveCaption('')
+    setFeeling(feelings[0].label)
+    setContext(contexts[0].value)
+    setProfileId(PROFILES[0].id)
+    setDynamicIcons(EMPTY_DYNAMIC_ICONS)
+    setFlaggedMoment(null)
+    setShowFlaggedMoment(false)
+    conversationBufferRef.current = new ConversationBuffer()
+    lastApprovedMessageRef.current = null
   }
 
   return (
@@ -460,19 +500,10 @@ function App() {
         </div>
       </header>
 
-      <nav className="mobile-switcher" aria-label="Switch workspace">
-        <button className={activeMobilePanel === 'student' ? 'active' : ''} onClick={() => setActiveMobilePanel('student')}>
-          <MessageCircleHeart size={18} /> My voice
-        </button>
-        <button className={activeMobilePanel === 'group' ? 'active' : ''} onClick={() => setActiveMobilePanel('group')}>
-          <Users size={18} /> Group chat
-        </button>
-      </nav>
-
-      <main className="workspace" ref={workspaceRef}>
+      <main className="workspace">
         <section
           id="student-workspace"
-          className={`panel student-panel ${activeMobilePanel === 'student' ? 'mobile-active' : ''}`}
+          className="panel student-panel mobile-active"
           aria-labelledby="student-title"
         >
           <div className="sand-decor" aria-hidden="true">
@@ -483,63 +514,109 @@ function App() {
           </div>
           <div className="panel-heading student-heading">
             <div className="person-block">
-              <div className="avatar student-avatar" aria-hidden="true">{activeStudent.avatarInitial}</div>
+              <div className="avatar student-avatar" aria-hidden="true">M</div>
               <div>
                 <span className="eyebrow">AAC workspace</span>
-                <h1 id="student-title">{activeStudent.name}’s voice</h1>
+                <h1 id="student-title">Maya’s voice</h1>
               </div>
             </div>
-            <div className="take-time"><Clock3 size={15} /> Take your time</div>
+            <div className="heading-actions">
+              <button
+                type="button"
+                className="help-understand-button"
+                aria-pressed={showFlaggedMoment}
+                onClick={() => setShowFlaggedMoment((value) => !value)}
+              >
+                <HandHelping size={15} /> <span>Help Maya understand</span>
+              </button>
+              <div className="take-time"><Clock3 size={15} /> Take your time</div>
+            </div>
           </div>
 
-          <fieldset className="student-switch-row">
-            <legend>Student</legend>
-            <div className="student-switch" role="group" aria-label="Switch student">
-              {STUDENTS.map((student) => (
-                <button
-                  key={student.id}
-                  type="button"
-                  className={activeStudentId === student.id ? 'active' : ''}
-                  aria-pressed={activeStudentId === student.id}
-                  onClick={() => switchStudent(student.id)}
-                >
-                  <span className="student-switch-avatar" aria-hidden="true">{student.avatarInitial}</span>
-                  {student.name}
-                </button>
-              ))}
-            </div>
-            <small className="profile-traits">{activeStudent.traits}</small>
-          </fieldset>
-
           <div className="student-scroll">
-            {(isSimplifying || session.simplified) && (
-              <section className="incoming-card" aria-live="polite" aria-busy={isSimplifying}>
-                {isSimplifying ? (
+            <section className="listening-control" aria-label="Ambient listening">
+              <button
+                className={`mic-button ${isListening ? 'listening' : ''}`}
+                type="button"
+                onClick={toggleVoiceInput}
+                aria-pressed={isListening}
+                aria-label={isListening ? 'Stop listening' : 'Start listening'}
+              >
+                <Mic size={22} />
+              </button>
+              <div className="listening-status">
+                <strong>{isListening ? 'Listening…' : 'Not listening'}</strong>
+                <span>
+                  {isListening
+                    ? liveCaption || 'Following the conversation…'
+                    : 'Turn on the mic to follow along and get help understanding.'}
+                </span>
+              </div>
+            </section>
+
+            {showFlaggedMoment && (
+              <div className="flagged-moment-card" role="status">
+                {flaggedMoment ? (
+                  <>
+                    <MiniIcons ids={flaggedMoment.icons} />
+                    <span><small>Might need your attention</small><strong>{flaggedMoment.label}</strong></span>
+                  </>
+                ) : (
+                  <span className="flagged-moment-empty">Nothing flagged in the conversation right now.</span>
+                )}
+              </div>
+            )}
+
+            {((isSimplifying && instructionQueue.length === 0) || currentInstruction) && (
+              <section className="incoming-card" aria-live="polite" aria-busy={isSimplifying && instructionQueue.length === 0}>
+                {instructionQueue.length > 1 && (
+                  <div className="instruction-nav">
+                    <button
+                      type="button"
+                      onClick={() => goToInstruction(-1)}
+                      disabled={!hasOlderInstruction}
+                      aria-label="Show the previous instruction"
+                    >
+                      <ChevronLeft size={17} />
+                    </button>
+                    <span>{instructionIndex + 1} of {instructionQueue.length}</span>
+                    <button
+                      type="button"
+                      onClick={() => goToInstruction(1)}
+                      disabled={!hasNewerInstruction}
+                      aria-label="Show the next instruction"
+                      className={hasNewerInstruction ? 'has-unseen' : ''}
+                    >
+                      <ChevronRight size={17} />
+                    </button>
+                  </div>
+                )}
+                {!currentInstruction && isSimplifying ? (
                   <div className="thinking-state">
                     <div className="thinking-orb"><Sparkles size={22} /></div>
                     <div><strong>Making that easier to follow…</strong><span>Finding the important steps</span></div>
                   </div>
-                ) : session.simplified?.status === 'please_repeat' ? (
+                ) : currentInstruction?.status === 'please_repeat' ? (
                   <div className="repeat-state">
                     <span className="repeat-symbol"><Ear size={27} /></span>
                     <div>
                       <span className="eyebrow">Let’s try that again</span>
                       <h2>I didn’t catch enough to be sure.</h2>
-                      <p>Ask your teammate to say it another way.</p>
-                      {session.simplified.source && <SourcePill source={session.simplified.source} />}
+                      <p>Ask them to say it another way.</p>
+                      {currentInstruction.source && <SourcePill source={currentInstruction.source} />}
                     </div>
                   </div>
-                ) : session.simplified ? (
+                ) : currentInstruction ? (
                   <>
                     <div className="incoming-header">
                       <div>
-                        <span className="eyebrow">Jordan shared a plan</span>
+                        <span className="eyebrow">From the conversation</span>
                         <h2>Here’s what to do</h2>
                       </div>
-                      <SourcePill source={session.simplified.source} />
+                      <SourcePill source={currentInstruction.source} />
                     </div>
                     <ol className="step-list">
-                      {session.simplified.steps.map((step, index) => (
+                      {currentInstruction.steps.map((step, index) => (
                         <li key={`${step.label}-${index}`}>
                           <button
                             type="button"
@@ -555,7 +632,7 @@ function App() {
                         </li>
                       ))}
                     </ol>
-                    {session.simplified.warnings.map((warning, index) => (
+                    {currentInstruction.warnings.map((warning, index) => (
                       <div className="warning-card" key={`${warning.label}-${index}`}>
                         <MiniIcons ids={warning.icons} />
                         <span><small>Important check</small><strong>{warning.label}</strong></span>
@@ -564,21 +641,17 @@ function App() {
                     <div className="quick-replies">
                       <span>Ready to answer?</span>
                       <div>
-                        {session.simplified.quickReplies.map((reply) => (
+                        {currentInstruction.quickReplies.map((reply) => (
                           <button key={reply} onClick={() => sendQuickReply(reply)} className={reply === 'DONE' ? 'reply-done' : 'reply-help'}>
                             {reply === 'DONE' ? <><Check size={15} /> Done</> : <><HandHelping size={15} /> Need help</>}
                           </button>
                         ))}
                       </div>
                     </div>
-                    <button
-                      className="transcript-toggle"
-                      onClick={() => updateSession((current) => ({ transcriptExpanded: !current.transcriptExpanded }))}
-                      aria-expanded={session.transcriptExpanded}
-                    >
-                      <ChevronDown size={17} /> {session.transcriptExpanded ? 'Hide' : 'Show'} exactly what Jordan said
+                    <button className="transcript-toggle" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+                      <ChevronDown size={17} /> {expanded ? 'Hide' : 'Show'} exactly what was said
                     </button>
-                    {session.transcriptExpanded && <blockquote className="transcript">“{session.simplified.transcript}”</blockquote>}
+                    {expanded && <blockquote className="transcript">“{currentInstruction.transcript}”</blockquote>}
                   </>
                 ) : null}
               </section>
@@ -588,16 +661,33 @@ function App() {
               <label>
                 <span>We’re working on</span>
                 <div className="select-wrap">
-                  <select value={session.context} onChange={(event) => changeContext(event.target.value)}>
+                  <select value={context} onChange={(event) => changeContext(event.target.value)}>
                     {contexts.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                   </select>
                   <ChevronDown size={17} />
                 </div>
               </label>
+              <fieldset className="profile-toggle-row">
+                <legend>Talking style</legend>
+                <div className="profile-toggle" role="group" aria-label="Talking style">
+                  {PROFILES.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={profileId === item.id ? 'active' : ''}
+                      aria-pressed={profileId === item.id}
+                      onClick={() => switchProfile(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <small className="profile-traits">{PROFILES.find((item) => item.id === profileId)?.traits}</small>
+              </fieldset>
               <label>
                 <span>I’m feeling</span>
                 <div className="select-wrap">
-                  <select value={session.feeling} onChange={(event) => setFeeling(event.target.value)}>
+                  <select value={feeling} onChange={(event) => setFeeling(event.target.value)}>
                     {feelings.map((item) => <option key={item.label} value={item.label}>{item.label}</option>)}
                   </select>
                   <ChevronDown size={17} />
@@ -611,12 +701,12 @@ function App() {
                   <span className="eyebrow">Choose one or more</span>
                   <h2 id="board-title">What do you want to say?</h2>
                 </div>
-                <span className="selection-count">{session.selectedIcons.length} selected</span>
+                <span className="selection-count">{sentence.length} selected</span>
               </div>
 
               <div className="aac-grid">
                 {ICONS.map((item) => {
-                  const selectedIndex = session.selectedIcons.indexOf(item.id)
+                  const selectedIndex = sentence.findIndex((token) => token.kind === 'icon' && token.id === item.id)
                   const isSelected = selectedIndex >= 0
                   return (
                     <button
@@ -636,25 +726,48 @@ function App() {
                 })}
               </div>
             </section>
+
+            <section className="dynamic-row-section" aria-labelledby="dynamic-row-title">
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">Following along</span>
+                  <h2 id="dynamic-row-title">Words from the conversation</h2>
+                </div>
+              </div>
+              <DynamicIconRow slots={dynamicIcons} selectedWordKeys={selectedWordKeys} onToggle={toggleWord} />
+            </section>
           </div>
 
           <div className="student-composer">
-            <div className={`selection-tray ${session.selectedIcons.length ? 'has-items' : ''}`} aria-live="polite">
-              {selectedDefinitions.length ? (
+            <div className={`selection-tray ${sentence.length ? 'has-items' : ''}`} aria-live="polite">
+              {sentence.length ? (
                 <>
                   <div className="selected-chips">
-                    {selectedDefinitions.map((item, index) => (
-                      <button key={item.id} onClick={() => toggleIcon(item.id)} title={`Remove ${item.label}`}>
-                        <span className="token-icon"><AacIcon id={item.id} size={15} /></span> {item.label} <X size={13} />
-                        {index < selectedDefinitions.length - 1 && <i aria-hidden="true"><ArrowRight size={14} /></i>}
-                      </button>
-                    ))}
+                    {sentence.map((token, index) => {
+                      const label = token.kind === 'icon' ? iconById(token.id).label : token.word
+                      const WordIcon = token.kind === 'word' ? symbolIcon(token.symbol) : null
+                      return (
+                        <button key={tokenKey(token)} onClick={() => toggleToken(token)} title={`Remove ${label}`}>
+                          <span className="token-icon">
+                            {token.kind === 'icon' ? (
+                              <AacIcon id={token.id} size={15} />
+                            ) : (
+                              WordIcon && <WordIcon size={15} aria-hidden="true" />
+                            )}
+                          </span>{' '}
+                          {label} <X size={13} />
+                          {index < sentence.length - 1 && <i aria-hidden="true"><ArrowRight size={14} /></i>}
+                        </button>
+                      )
+                    })}
                   </div>
                   <button
                     className="clear-button"
                     onClick={() => {
                       invalidatePendingRequest()
-                      updateSession({ candidates: [], candidateSource: null, selectedIcons: [] })
+                      setCandidates([])
+                      setCandidateSource(null)
+                      setSentence([])
                     }}
                     aria-label="Clear all selections"
                   ><Trash2 size={17} /></button>
@@ -663,12 +776,12 @@ function App() {
                 <span className="tray-placeholder"><MousePointerClick size={17} /> Tap a card to begin your message</span>
               )}
             </div>
-            <button className="primary-button" onClick={makeMessage} disabled={!session.selectedIcons.length || isExpanding}>
+            <button className="primary-button" onClick={makeMessage} disabled={!sentence.length || isExpanding}>
               {isExpanding ? <><span className="spinner" /> Finding your words…</> : <><Sparkles size={19} /> Create my message</>}
             </button>
           </div>
 
-          {session.candidates.length > 0 && (
+          {candidates.length > 0 && (
             <div className="candidate-backdrop" role="presentation">
               <section className="candidate-sheet" role="dialog" aria-modal="true" aria-labelledby="candidate-title">
                 <div className="candidate-top">
@@ -678,11 +791,11 @@ function App() {
                     <h2 id="candidate-title">Which sounds most like you?</h2>
                     <p>Nothing is shared until you choose.</p>
                   </div>
-                  <button className="icon-button close-dialog" onClick={() => updateSession({ candidates: [] })} aria-label="Close message choices"><X size={20} /></button>
+                  <button className="icon-button close-dialog" onClick={() => setCandidates([])} aria-label="Close message choices"><X size={20} /></button>
                 </div>
-                {session.candidateSource && <SourcePill source={session.candidateSource} />}
+                {candidateSource && <SourcePill source={candidateSource} />}
                 <div className="candidate-list">
-                  {session.candidates.map((candidate, index) => (
+                  {candidates.map((candidate, index) => (
                     <div className="candidate-row" key={candidate.id}>
                       <button
                         type="button"
@@ -708,126 +821,6 @@ function App() {
             </div>
           )}
         </section>
-
-        <div
-          className="panel-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize chat panel"
-          aria-valuenow={Math.round(chatWidthPct)}
-          aria-valuemin={0}
-          aria-valuemax={CHAT_MAX_WIDTH_PCT}
-          tabIndex={0}
-          onPointerDown={handleResizerPointerDown}
-          onPointerMove={handleResizerPointerMove}
-          onPointerUp={handleResizerPointerUp}
-          onPointerCancel={handleResizerPointerUp}
-          onKeyDown={handleResizerKeyDown}
-        />
-
-        <section
-          className={`panel group-panel ${activeMobilePanel === 'group' ? 'mobile-active' : ''}`}
-          aria-labelledby="group-title"
-          style={{ flexBasis: `${chatWidthPct}%` }}
-        >
-          <div className="ocean-decor" aria-hidden="true">
-            <svg className="ocean-wave ocean-wave-back" viewBox="0 0 600 90" preserveAspectRatio="none">
-              <path d="M0 42 C75 8 125 76 205 40 C285 4 340 78 425 40 C505 5 550 60 600 36 V90 H0 Z" />
-            </svg>
-            <svg className="ocean-wave ocean-wave-front" viewBox="0 0 600 90" preserveAspectRatio="none">
-              <path d="M0 48 C72 78 130 14 210 50 C290 84 350 10 430 48 C510 82 558 22 600 45 V90 H0 Z" />
-            </svg>
-            <span className="ocean-bubble bubble-one" />
-            <span className="ocean-bubble bubble-two" />
-            <span className="ocean-bubble bubble-three" />
-          </div>
-          <div className="panel-heading group-heading">
-            <div className="person-block">
-              <div className="avatar group-avatar" aria-hidden="true"><Users size={20} /></div>
-              <div>
-                <span className="eyebrow">Shared conversation</span>
-                <h2 id="group-title">Science team</h2>
-              </div>
-            </div>
-            <div className="group-faces" aria-label={`${activeStudent.name}, Jordan, and two classmates are here`}>
-              <span className="face face-one">{activeStudent.avatarInitial}</span><span className="face face-two">J</span><span className="face face-three">A</span><span className="face-count">+1</span>
-            </div>
-          </div>
-
-          <div className="chat-feed" aria-live="polite">
-            <div className="day-divider"><span>Today · Science Lab</span></div>
-            {session.messages.map((message) =>
-              message.sender === 'system' ? (
-                <div className="system-message" key={message.id}><Sparkles size={15} /><span>{message.text}</span></div>
-              ) : (
-                <article className={`chat-row ${message.sender}`} key={message.id}>
-                  <div className={`message-avatar ${message.sender === 'student' ? 'student-message-avatar' : ''}`} aria-hidden="true">
-                    {message.author.charAt(0)}
-                  </div>
-                  <div className="message-stack">
-                    <div className="message-meta"><strong>{message.author}</strong><time>{message.time}</time></div>
-                    {message.expandedFrom && (
-                      <div className="expansion-badge">
-                        <Sparkles size={12} />
-                        <span>Expanded from AAC:</span>
-                        {message.expandedFrom.map((id) => (
-                          <span className="expansion-token" key={id}>
-                            <AacIcon id={id} size={12} /> {iconById(id).label}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <div className="message-bubble"><span>{message.text}</span></div>
-                    {message.sender === 'student' && (
-                      <div className="message-foot">
-                        <span className="spoken-label"><Volume2 size={13} /> Spoken aloud</span>
-                        {message.source && <SourcePill source={message.source} />}
-                      </div>
-                    )}
-                  </div>
-                </article>
-              ),
-            )}
-          </div>
-
-          <div className="peer-composer">
-            <div className="composer-tip"><MessageCircleHeart size={15} /><span>Keep it clear, kind, and one step at a time.</span></div>
-            <div className="composer-box">
-              <textarea
-                ref={composerRef}
-                value={session.peerText}
-                onChange={(event) => updateSession({ peerText: event.target.value })}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault()
-                    void sendPeerMessage()
-                  }
-                }}
-                placeholder="Type a message to the group…"
-                rows={2}
-                aria-label="Message the group"
-              />
-              <div className="composer-actions">
-                <div className="mic-wrap">
-                  <button
-                    className={`mic-button ${isListening ? 'listening' : ''}`}
-                    type="button"
-                    onClick={toggleVoiceInput}
-                    aria-pressed={isListening}
-                    aria-label={isListening ? 'Stop voice input' : 'Speak your message'}
-                  >
-                    <Mic size={19} />
-                  </button>
-                  <span>{isListening ? 'Listening…' : 'Speak'}</span>
-                </div>
-                <button className="send-button" onClick={sendPeerMessage} disabled={!session.peerText.trim() || isSimplifying}>
-                  <span>{isSimplifying ? 'Sending…' : 'Send'}</span><Send size={18} />
-                </button>
-              </div>
-            </div>
-            <p className="composer-hint">Press Enter to send · Shift + Enter for a new line</p>
-          </div>
-        </section>
       </main>
 
       {notice && <div className="toast" role="status"><span><Check size={17} /></span>{notice}</div>}
@@ -840,8 +833,8 @@ function App() {
             <span className="eyebrow">A communication bridge</span>
             <h2 id="help-title">Pebble helps everyone meet in the middle.</h2>
             <div className="help-steps">
-              <div><span>1</span><p><strong>{activeStudent.name} chooses ideas</strong> using familiar communication cards.</p></div>
-              <div><span>2</span><p><strong>Pebble offers natural phrases.</strong> {activeStudent.name} decides which one sounds right.</p></div>
+              <div><span>1</span><p><strong>Maya chooses ideas</strong> using familiar communication cards.</p></div>
+              <div><span>2</span><p><strong>Pebble offers natural phrases.</strong> Maya decides which one sounds right.</p></div>
               <div><span>3</span><p><strong>Fast group messages become clear steps</strong> that are easier to follow.</p></div>
             </div>
             <p className="help-principle">The AI never speaks for the student. It helps the student be heard.</p>

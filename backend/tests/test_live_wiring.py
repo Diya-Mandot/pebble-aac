@@ -14,7 +14,15 @@ from src.profile.app import lambda_handler as profile_handler
 
 EXPAND_EVENT = {
     "body": json.dumps(
-        {"icons": ["CONFUSED", "BUILD", "HELP"], "context": "classroom group project", "profileId": "demo"}
+        {
+            "tokens": [
+                {"kind": "icon", "id": "CONFUSED"},
+                {"kind": "icon", "id": "BUILD"},
+                {"kind": "icon", "id": "HELP"},
+            ],
+            "context": "classroom group project",
+            "profileId": "demo",
+        }
     )
 }
 SIMPLIFY_EVENT = {"body": json.dumps({"text": "put the block on the table"})}

@@ -1,4 +1,13 @@
-import type { Candidate, ExpandResponse, IconId, SimplifyResponse, SpeakResponse } from './types'
+import type {
+  Candidate,
+  ContextUpdateRequest,
+  ContextUpdateResponse,
+  ExpandResponse,
+  IconId,
+  SentenceToken,
+  SimplifyResponse,
+  SpeakResponse,
+} from './types'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
@@ -32,8 +41,11 @@ const scriptedFallbackByProfile: Record<string, Candidate[]> = {
   ],
 }
 
-const genericFallback = (icons: IconId[]): Candidate[] => {
-  const words = icons.map((id) => ICON_LABELS[id]).join(', ')
+// Walks tokens in order (icon -> its label, word -> itself) so the offline fallback text
+// preserves the sequence the student actually built, matching the backend's own fallback shape
+// (see backend/src/common/bedrock.py's _deterministic_fallback).
+const genericFallback = (tokens: SentenceToken[]): Candidate[] => {
+  const words = tokens.map((token) => (token.kind === 'icon' ? ICON_LABELS[token.id] : token.word)).join(', ')
   return [
     { id: 'c1', text: `I want to say: ${words}.` },
     { id: 'c2', text: `Can we talk about ${words}?` },
@@ -84,19 +96,29 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export async function expandMessage(icons: IconId[], context: string, profileId: string): Promise<ExpandResponse> {
+export async function expandMessage(
+  tokens: SentenceToken[],
+  context: string,
+  profileId: string,
+): Promise<ExpandResponse> {
+  // symbol is presentation-only; the backend token shape has no such field.
+  const wireTokens = tokens.map((token) =>
+    token.kind === 'icon' ? { kind: 'icon' as const, id: token.id } : { kind: 'word' as const, word: token.word },
+  )
   try {
-    return await post<ExpandResponse>('/expand', { icons, context, profileId })
+    return await post<ExpandResponse>('/expand', { tokens: wireTokens, context, profileId })
   } catch {
     // Exact order, not membership -- mirrors expand/app.py's _scripted_fallback_candidates
-    // (`request["icons"] != list(icons)`), so a reordered selection like HELP+BUILD+CONFUSED
-    // correctly falls through to the generic fallback instead of matching the scripted
-    // CONFUSED+BUILD+HELP demo response it wasn't recorded for.
-    const isScripted = context === SCRIPTED_CONTEXT && icons.length === SCRIPTED_ICONS.length
-      && icons.every((id, index) => id === SCRIPTED_ICONS[index])
+    // (every token must be an icon matching SCRIPTED_ICONS in order), so a reordered selection
+    // like HELP+BUILD+CONFUSED, or any selection including a word token, correctly falls through
+    // to the generic fallback instead of matching the scripted CONFUSED+BUILD+HELP demo response
+    // it wasn't recorded for.
+    const isScripted = context === SCRIPTED_CONTEXT
+      && tokens.length === SCRIPTED_ICONS.length
+      && tokens.every((token, index) => token.kind === 'icon' && token.id === SCRIPTED_ICONS[index])
     const candidates = isScripted
       ? (scriptedFallbackByProfile[profileId] ?? scriptedFallbackByProfile.demo)
-      : genericFallback(icons)
+      : genericFallback(tokens)
     return { candidates, source: 'fallback', error: 'The live service is unavailable. Showing a demo fallback.' }
   }
 }
@@ -115,4 +137,11 @@ export async function simplifyMessage(text: string): Promise<SimplifyResponse> {
 // speechSynthesis, which speaks the exact same approved text, just with a lower-quality voice.
 export async function speakMessage(text: string): Promise<SpeakResponse> {
   return post<SpeakResponse>('/speak', { text })
+}
+
+// No synthetic fallback here either: a guessed dynamicIcons/flaggedMoment on a network failure
+// would violate the "never guess" design rule (CONTEXT_PIPELINE_PLAN.md). Callers should treat a
+// thrown error as "no update this cycle" and leave the board as it was.
+export async function fetchContextUpdate(payload: ContextUpdateRequest): Promise<ContextUpdateResponse> {
+  return post<ContextUpdateResponse>('/context/update', payload)
 }

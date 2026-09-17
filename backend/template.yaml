@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Bridge AAC backend — /expand, /simplify, /speak, /profile/{id}, plus the CloudFront-fronted static site
+Description: Bridge AAC backend — /expand, /simplify, /speak, /profile/{id}, /context/update, plus the CloudFront-fronted static site
 
 Parameters:
   SiteUsername:
@@ -128,6 +128,27 @@ Resources:
           Properties:
             RestApiId: !Ref BridgeApi
             Path: /speak
+            Method: post
+
+  ContextFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src.context.app.lambda_handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource:
+                # Same policy as SimplifyFunction (identical model/account/region constraints).
+                - !Sub "arn:${AWS::Partition}:bedrock:us-east-1:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-6"
+                - !Sub "arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
+      Events:
+        UpdateContext:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BridgeApi
+            Path: /context/update
             Method: post
 
   ProfileFunction:

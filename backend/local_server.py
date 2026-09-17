@@ -32,12 +32,14 @@ from src.expand.app import lambda_handler as expand_handler
 from src.simplify.app import lambda_handler as simplify_handler
 from src.speak.app import lambda_handler as speak_handler
 from src.profile.app import lambda_handler as profile_handler
+from src.context.app import lambda_handler as context_handler
 from src.common.responses import CORS_HEADERS
 
 ROUTES = {
     "/expand": expand_handler,
     "/simplify": simplify_handler,
     "/speak": speak_handler,
+    "/context/update": context_handler,
 }
 
 PROFILE_PATH_RE = re.compile(r"^/profile/(?P<id>[^/]+)$")
@@ -105,7 +107,10 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     server = HTTPServer(("127.0.0.1", port), Handler)
-    print(f"Serving /expand, /simplify, /speak, and /profile/{{id}} on http://127.0.0.1:{port}")
+    print(
+        f"Serving /expand, /simplify, /speak, /profile/{{id}}, and /context/update on "
+        f"http://127.0.0.1:{port}"
+    )
     server.serve_forever()
 
 
