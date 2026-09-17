@@ -217,8 +217,11 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visi
 .candidate-top h2, .help-dialog h2 { margin: 2px 0 2px; font: 800 21px/1.2 Nunito, sans-serif; }.candidate-top p { margin: 0; color: var(--muted); font-size: 11px; }
 .close-dialog { position: absolute; right: 0; top: 0; }
 .candidate-list { margin-top: 12px; display: flex; flex-direction: column; gap: 9px; }
-.candidate-list > button { display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 11px; padding: 14px; border: 1px solid #dce5ed; border-radius: 15px; background: #fff; text-align: left; cursor: pointer; transition: .15s ease; }
-.candidate-list > button:hover { border-color: #8eb4f7; background: #f6f9ff; transform: translateX(2px); }
+.candidate-row { display: flex; align-items: stretch; gap: 8px; }
+.candidate-listen { flex: 0 0 auto; width: 44px; display: grid; place-items: center; border: 1px solid #dce5ed; border-radius: 15px; background: #fff; color: var(--blue); cursor: pointer; transition: .15s ease; }
+.candidate-listen:hover { border-color: #8eb4f7; background: #f6f9ff; }
+.candidate-row > .candidate-choose { flex: 1 1 auto; display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 11px; padding: 14px; border: 1px solid #dce5ed; border-radius: 15px; background: #fff; text-align: left; cursor: pointer; transition: .15s ease; }
+.candidate-row > .candidate-choose:hover { border-color: #8eb4f7; background: #f6f9ff; transform: translateX(2px); }
 .candidate-number { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 9px; background: #e7f0ff; color: #285fb8; font-size: 11px; font-weight: 800; }.candidate-list button > span:nth-child(2) { font-size: 13px; line-height: 1.45; }.choose-label { display: flex; align-items: center; gap: 4px; color: var(--blue); font-size: 10px; font-weight: 800; }
 .privacy-note { display: flex; align-items: center; justify-content: center; gap: 5px; margin: 15px 0 0; color: #718096; font-size: 9px; }
 .toast { position: fixed; z-index: 100; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; align-items: center; gap: 9px; padding: 10px 15px 10px 10px; background: #102a2b; color: white; border-radius: 13px; box-shadow: var(--shadow-md); font-size: 12px; font-weight: 700; animation: toastIn .2s ease-out; }
@@ -256,7 +259,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visi
   .student-composer { padding: 10px 12px; }.selected-chips { flex-wrap: nowrap; max-width: calc(100vw - 68px); overflow-x: auto; padding: 2px; }.selected-chips button { flex: 0 0 auto; }.selected-chips i { display: none; }
   .incoming-header { flex-direction: column; }.quick-replies { align-items: flex-start; flex-direction: column; }
   .chat-feed { padding: 18px 13px 25px; }.message-stack { max-width: 83%; }.peer-composer { padding: 9px 11px 12px; }.composer-tip, .composer-hint { display: none; }.send-button span { display: none; }.send-button { width: 40px; justify-content: center; padding: 0; }
-  .candidate-backdrop, .help-backdrop { align-items: end; padding: 0; }.candidate-sheet, .help-dialog { max-height: 92dvh; overflow-y: auto; border-radius: 24px 24px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); }.candidate-list > button { grid-template-columns: 30px 1fr; }.choose-label { display: none; }
+  .candidate-backdrop, .help-backdrop { align-items: end; padding: 0; }.candidate-sheet, .help-dialog { max-height: 92dvh; overflow-y: auto; border-radius: 24px 24px 0 0; padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); }.candidate-row > .candidate-choose { grid-template-columns: 30px 1fr; }.choose-label { display: none; }
   .toast { width: calc(100% - 24px); justify-content: center; bottom: 12px; }
 }
 

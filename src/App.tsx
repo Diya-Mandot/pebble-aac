@@ -645,11 +645,24 @@ function App() {
                 {candidateSource && <SourcePill source={candidateSource} />}
                 <div className="candidate-list">
                   {candidates.map((candidate, index) => (
-                    <button key={candidate.id} onClick={() => approveCandidate(candidate)}>
-                      <span className="candidate-number">{index + 1}</span>
-                      <span>{candidate.text}</span>
-                      <span className="choose-label">Choose <ArrowRight size={16} /></span>
-                    </button>
+                    <div className="candidate-row" key={candidate.id}>
+                      <button
+                        type="button"
+                        className="candidate-listen"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          speakText(candidate.text)
+                        }}
+                        aria-label={`Hear option ${index + 1} out loud: ${candidate.text}`}
+                      >
+                        <Volume2 size={17} />
+                      </button>
+                      <button className="candidate-choose" onClick={() => approveCandidate(candidate)}>
+                        <span className="candidate-number">{index + 1}</span>
+                        <span>{candidate.text}</span>
+                        <span className="choose-label">Choose <ArrowRight size={16} /></span>
+                      </button>
+                    </div>
                   ))}
                 </div>
                 <p className="privacy-note"><Info size={14} /> Pebble offers choices. You decide what represents you.</p>
