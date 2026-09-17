@@ -133,7 +133,7 @@ Resources:
   ContextFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      CodeUri: .build
       Handler: src.context.app.lambda_handler
       Policies:
         - Statement:
