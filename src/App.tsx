@@ -155,6 +155,53 @@ function App() {
   const [showHelp, setShowHelp] = useState(false)
   const [activeMobilePanel, setActiveMobilePanel] = useState<'student' | 'group'>('student')
   const composerRef = useRef<HTMLTextAreaElement>(null)
+  const workspaceRef = useRef<HTMLElement>(null)
+  const resizingRef = useRef(false)
+
+  const CHAT_MIN_WIDTH_PX = 360
+  const CHAT_MAX_WIDTH_PCT = 50
+  const [chatWidthPct, setChatWidthPct] = useState(46)
+
+  const clampChatWidthPct = (pct: number, containerWidth: number) => {
+    const minPct = containerWidth ? (CHAT_MIN_WIDTH_PX / containerWidth) * 100 : 0
+    return Math.min(CHAT_MAX_WIDTH_PCT, Math.max(minPct, pct))
+  }
+
+  const updateChatWidthFromPointer = (clientX: number) => {
+    const rect = workspaceRef.current?.getBoundingClientRect()
+    if (!rect || !rect.width) return
+    const distanceFromRight = rect.right - clientX
+    const pct = (distanceFromRight / rect.width) * 100
+    setChatWidthPct(clampChatWidthPct(pct, rect.width))
+  }
+
+  const handleResizerPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    resizingRef.current = true
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.currentTarget.classList.add('active')
+  }
+
+  const handleResizerPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizingRef.current) return
+    updateChatWidthFromPointer(event.clientX)
+  }
+
+  const handleResizerPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    resizingRef.current = false
+    event.currentTarget.classList.remove('active')
+  }
+
+  const handleResizerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const rect = workspaceRef.current?.getBoundingClientRect()
+    if (!rect || !rect.width) return
+    const step = 2
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault()
+      const direction = event.key === 'ArrowLeft' ? 1 : -1
+      setChatWidthPct((current) => clampChatWidthPct(current + direction * step, rect.width))
+    }
+  }
 
   // Guards against a pending /expand response landing after the state it was requested for has
   // already changed (icon edits, profile switch, context change, or Reset while a request is in
@@ -348,7 +395,7 @@ function App() {
         </button>
       </nav>
 
-      <main className="workspace">
+      <main className="workspace" ref={workspaceRef}>
         <section
           id="student-workspace"
           className={`panel student-panel ${activeMobilePanel === 'student' ? 'mobile-active' : ''}`}
@@ -563,7 +610,27 @@ function App() {
           )}
         </section>
 
-        <section className={`panel group-panel ${activeMobilePanel === 'group' ? 'mobile-active' : ''}`} aria-labelledby="group-title">
+        <div
+          className="panel-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize chat panel"
+          aria-valuenow={Math.round(chatWidthPct)}
+          aria-valuemin={0}
+          aria-valuemax={CHAT_MAX_WIDTH_PCT}
+          tabIndex={0}
+          onPointerDown={handleResizerPointerDown}
+          onPointerMove={handleResizerPointerMove}
+          onPointerUp={handleResizerPointerUp}
+          onPointerCancel={handleResizerPointerUp}
+          onKeyDown={handleResizerKeyDown}
+        />
+
+        <section
+          className={`panel group-panel ${activeMobilePanel === 'group' ? 'mobile-active' : ''}`}
+          aria-labelledby="group-title"
+          style={{ flexBasis: `${chatWidthPct}%` }}
+        >
           <div className="ocean-decor" aria-hidden="true">
             <svg className="ocean-wave ocean-wave-back" viewBox="0 0 600 90" preserveAspectRatio="none">
               <path d="M0 42 C75 8 125 76 205 40 C285 4 340 78 425 40 C505 5 550 60 600 36 V90 H0 Z" />
