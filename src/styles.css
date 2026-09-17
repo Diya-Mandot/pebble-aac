@@ -133,6 +133,12 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visi
 
 .incoming-card { margin: 0 0 20px; padding: 17px; border: 1px solid #bfe3dc; background: #f1fbf8; border-radius: 18px; box-shadow: var(--shadow-sm); }
 .incoming-header { display: flex; align-items: start; justify-content: space-between; gap: 10px; margin-bottom: 13px; }
+.instruction-nav { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 13px; }
+.instruction-nav button { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid #bfe3dc; border-radius: 9px; background: #fff; color: #0f766e; cursor: pointer; }
+.instruction-nav button:disabled { color: #b6c4c1; border-color: #dcece9; cursor: not-allowed; }
+.instruction-nav button:not(:disabled):hover { background: #dff6f1; }
+.instruction-nav button.has-unseen { border-color: #0d9488; box-shadow: 0 0 0 3px rgba(13,148,136,.15); }
+.instruction-nav span { font-size: 11px; font-weight: 800; color: #536578; min-width: 52px; text-align: center; }
 .step-list { padding: 0; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
 .step-list li { min-height: 50px; display: grid; grid-template-columns: 28px auto 1fr; gap: 10px; align-items: center; padding: 8px 11px; background: #fff; border: 1px solid #dcece9; border-radius: 13px; }
 .step-number { width: 25px; height: 25px; display: grid; place-items: center; background: #d9f1ec; border-radius: 8px; color: #08766c; font-size: 11px; font-weight: 800; }

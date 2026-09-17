@@ -4,6 +4,8 @@ import {
   BadgeCheck,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CircleHelp,
   Clock3,
   Ear,
@@ -16,6 +18,7 @@ import {
   MousePointerClick,
   OctagonX,
   Puzzle,
+  Repeat,
   RotateCcw,
   ScanSearch,
   Shell,
@@ -50,7 +53,7 @@ type IconDefinition = {
 }
 
 const ICONS: IconDefinition[] = [
-  { id: 'CONFUSED', label: 'Confused', helper: "I don't understand", icon: CircleHelp, tone: 'lavender' },
+  { id: 'CONFUSED', label: 'Repeat', helper: 'Say it again', icon: Repeat, tone: 'lavender' },
   { id: 'IDEA', label: 'I have an idea', helper: 'I want to share', icon: Lightbulb, tone: 'sun' },
   { id: 'BUILD', label: 'Build', helper: 'Make or put together', icon: Puzzle, tone: 'blue' },
   { id: 'HELP', label: 'Help', helper: 'I need support', icon: HandHelping, tone: 'teal' },
@@ -161,7 +164,11 @@ function App() {
   // never sent anywhere; each finalized chunk is what actually drives simplify/context below.
   const [liveCaption, setLiveCaption] = useState('')
   const [isSimplifying, setIsSimplifying] = useState(false)
-  const [simplified, setSimplified] = useState<SimplifyResponse | null>(null)
+  // Every finalized utterance produces one instruction card, but they never overwrite each other --
+  // that was overwhelming the student when a new one popped in mid-read. Instead each result queues
+  // up here, and only left/right navigation or clicking "Done" moves which one is on screen.
+  const [instructionQueue, setInstructionQueue] = useState<SimplifyResponse[]>([])
+  const [instructionIndex, setInstructionIndex] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [dynamicIcons, setDynamicIcons] = useState<(DynamicIconSlot | null)[]>(EMPTY_DYNAMIC_ICONS)
@@ -308,9 +315,25 @@ function App() {
     setIsSimplifying(true)
     setLiveCaption('')
     const response = await simplifyMessage(text)
-    setSimplified(response)
+    // Only jump the view to this new instruction if nothing was queued yet (first one this
+    // session). Otherwise it joins the back of the queue and waits for the student to page to it.
+    setInstructionQueue((queue) => {
+      if (queue.length === 0) setInstructionIndex(0)
+      return [...queue, response]
+    })
     setIsSimplifying(false)
     isSimplifyingRef.current = false
+  }
+
+  const currentInstruction = instructionQueue[instructionIndex] ?? null
+  const hasOlderInstruction = instructionIndex > 0
+  const hasNewerInstruction = instructionIndex < instructionQueue.length - 1
+
+  const goToInstruction = (delta: number) => {
+    setInstructionIndex((index) => {
+      const next = index + delta
+      return Math.min(Math.max(next, 0), instructionQueue.length - 1)
+    })
   }
 
   const startRecognition = () => {
@@ -383,6 +406,10 @@ function App() {
     speakText(text)
     setNotice('Your reply was spoken aloud.')
     window.setTimeout(() => setNotice(null), 2800)
+
+    // Marking an instruction done moves on to whatever's next in the queue -- if nothing is
+    // queued yet, stay put rather than running off the end.
+    if (reply === 'DONE') goToInstruction(1)
   }
 
   const resetDemo = () => {
@@ -390,7 +417,8 @@ function App() {
     setSelectedIcons([])
     setCandidates([])
     setCandidateSource(null)
-    setSimplified(null)
+    setInstructionQueue([])
+    setInstructionIndex(0)
     setLiveCaption('')
     setFeeling(feelings[0].label)
     setContext(contexts[0].value)
@@ -499,34 +527,56 @@ function App() {
               </div>
             )}
 
-            {(isSimplifying || simplified) && (
-              <section className="incoming-card" aria-live="polite" aria-busy={isSimplifying}>
-                {isSimplifying ? (
+            {((isSimplifying && instructionQueue.length === 0) || currentInstruction) && (
+              <section className="incoming-card" aria-live="polite" aria-busy={isSimplifying && instructionQueue.length === 0}>
+                {instructionQueue.length > 1 && (
+                  <div className="instruction-nav">
+                    <button
+                      type="button"
+                      onClick={() => goToInstruction(-1)}
+                      disabled={!hasOlderInstruction}
+                      aria-label="Show the previous instruction"
+                    >
+                      <ChevronLeft size={17} />
+                    </button>
+                    <span>{instructionIndex + 1} of {instructionQueue.length}</span>
+                    <button
+                      type="button"
+                      onClick={() => goToInstruction(1)}
+                      disabled={!hasNewerInstruction}
+                      aria-label="Show the next instruction"
+                      className={hasNewerInstruction ? 'has-unseen' : ''}
+                    >
+                      <ChevronRight size={17} />
+                    </button>
+                  </div>
+                )}
+                {!currentInstruction && isSimplifying ? (
                   <div className="thinking-state">
                     <div className="thinking-orb"><Sparkles size={22} /></div>
                     <div><strong>Making that easier to follow…</strong><span>Finding the important steps</span></div>
                   </div>
-                ) : simplified?.status === 'please_repeat' ? (
+                ) : currentInstruction?.status === 'please_repeat' ? (
                   <div className="repeat-state">
                     <span className="repeat-symbol"><Ear size={27} /></span>
                     <div>
                       <span className="eyebrow">Let’s try that again</span>
                       <h2>I didn’t catch enough to be sure.</h2>
                       <p>Ask them to say it another way.</p>
-                      {simplified.source && <SourcePill source={simplified.source} />}
+                      {currentInstruction.source && <SourcePill source={currentInstruction.source} />}
                     </div>
                   </div>
-                ) : simplified ? (
+                ) : currentInstruction ? (
                   <>
                     <div className="incoming-header">
                       <div>
                         <span className="eyebrow">From the conversation</span>
                         <h2>Here’s what to do</h2>
                       </div>
-                      <SourcePill source={simplified.source} />
+                      <SourcePill source={currentInstruction.source} />
                     </div>
                     <ol className="step-list">
-                      {simplified.steps.map((step, index) => (
+                      {currentInstruction.steps.map((step, index) => (
                         <li key={`${step.label}-${index}`}>
                           <span className="step-number">{index + 1}</span>
                           <MiniIcons ids={step.icons} />
@@ -534,7 +584,7 @@ function App() {
                         </li>
                       ))}
                     </ol>
-                    {simplified.warnings.map((warning, index) => (
+                    {currentInstruction.warnings.map((warning, index) => (
                       <div className="warning-card" key={`${warning.label}-${index}`}>
                         <MiniIcons ids={warning.icons} />
                         <span><small>Important check</small><strong>{warning.label}</strong></span>
@@ -543,7 +593,7 @@ function App() {
                     <div className="quick-replies">
                       <span>Ready to answer?</span>
                       <div>
-                        {simplified.quickReplies.map((reply) => (
+                        {currentInstruction.quickReplies.map((reply) => (
                           <button key={reply} onClick={() => sendQuickReply(reply)} className={reply === 'DONE' ? 'reply-done' : 'reply-help'}>
                             {reply === 'DONE' ? <><Check size={15} /> Done</> : <><HandHelping size={15} /> Need help</>}
                           </button>
@@ -553,7 +603,7 @@ function App() {
                     <button className="transcript-toggle" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
                       <ChevronDown size={17} /> {expanded ? 'Hide' : 'Show'} exactly what was said
                     </button>
-                    {expanded && <blockquote className="transcript">“{simplified.transcript}”</blockquote>}
+                    {expanded && <blockquote className="transcript">“{currentInstruction.transcript}”</blockquote>}
                   </>
                 ) : null}
               </section>
