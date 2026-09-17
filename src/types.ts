@@ -1,5 +1,5 @@
 export type IconId =
-  | 'CONFUSED'
+  | 'REPEAT'
   | 'IDEA'
   | 'BUILD'
   | 'HELP'

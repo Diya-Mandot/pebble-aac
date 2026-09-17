@@ -16,7 +16,7 @@ EXPAND_EVENT = {
     "body": json.dumps(
         {
             "tokens": [
-                {"kind": "icon", "id": "CONFUSED"},
+                {"kind": "icon", "id": "REPEAT"},
                 {"kind": "icon", "id": "BUILD"},
                 {"kind": "icon", "id": "HELP"},
             ],

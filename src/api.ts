@@ -15,14 +15,14 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').
 // expandMessage etc. from this module, so pulling iconById back in the other direction would be
 // an import cycle. Kept minimal (labels only, no lucide icon components).
 const ICON_LABELS: Record<IconId, string> = {
-  CONFUSED: 'confused', IDEA: 'i have an idea', BUILD: 'build', HELP: 'help', AGREE: 'i agree',
+  REPEAT: 'repeat', IDEA: 'i have an idea', BUILD: 'build', HELP: 'help', AGREE: 'i agree',
   DISAGREE: 'i disagree', QUESTION: 'question', STOP: 'stop', CHECK: 'check', DONE: "i'm done",
 }
 
 // Matches backend/fixtures/expand_default.json's scripted "request" -- only that exact icon
 // sequence + context is safe to answer with the canned demo strings below (mirrors expand/app.py's
 // _scripted_fallback_candidates, which does the same exact-order comparison on the backend).
-const SCRIPTED_ICONS: IconId[] = ['CONFUSED', 'BUILD', 'HELP']
+const SCRIPTED_ICONS: IconId[] = ['REPEAT', 'BUILD', 'HELP']
 const SCRIPTED_CONTEXT = 'classroom group project'
 
 // Mirrors expand_default.json's two profiles' canned candidates, so this fully-offline fallback
@@ -30,14 +30,14 @@ const SCRIPTED_CONTEXT = 'classroom group project'
 // different text per profile, same as the backend's own no-AWS-creds fallback already does.
 const scriptedFallbackByProfile: Record<string, Candidate[]> = {
   demo: [
-    { id: 'c1', text: "I'm confused about building this. Can you help?" },
-    { id: 'c2', text: "I don't understand this part. Please help me build it." },
-    { id: 'c3', text: 'How do I build this? I need help.' },
+    { id: 'c1', text: 'Can you say that again about building this? I need help.' },
+    { id: 'c2', text: 'Please repeat that. I need help building it.' },
+    { id: 'c3', text: "I didn't catch that. Can you help me build it?" },
   ],
   demo_alt: [
-    { id: 'c1', text: "I'm not sure how to build this. Could we work through it together?" },
-    { id: 'c2', text: 'This build is confusing me. Can someone explain how to approach it?' },
-    { id: 'c3', text: 'I need some help understanding how this goes together.' },
+    { id: 'c1', text: "Could you repeat that part about building this? I'd like to understand." },
+    { id: 'c2', text: 'I missed what you said about building this. Can we go over it again?' },
+    { id: 'c3', text: 'Can you say that again? I need help putting this together.' },
   ],
 }
 
@@ -110,8 +110,8 @@ export async function expandMessage(
   } catch {
     // Exact order, not membership -- mirrors expand/app.py's _scripted_fallback_candidates
     // (every token must be an icon matching SCRIPTED_ICONS in order), so a reordered selection
-    // like HELP+BUILD+CONFUSED, or any selection including a word token, correctly falls through
-    // to the generic fallback instead of matching the scripted CONFUSED+BUILD+HELP demo response
+    // like HELP+BUILD+REPEAT, or any selection including a word token, correctly falls through
+    // to the generic fallback instead of matching the scripted REPEAT+BUILD+HELP demo response
     // it wasn't recorded for.
     const isScripted = context === SCRIPTED_CONTEXT
       && tokens.length === SCRIPTED_ICONS.length

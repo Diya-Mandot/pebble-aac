@@ -55,7 +55,7 @@ type IconDefinition = {
 }
 
 const ICONS: IconDefinition[] = [
-  { id: 'CONFUSED', label: 'Repeat', helper: 'Say it again', icon: Repeat, tone: 'lavender' },
+  { id: 'REPEAT', label: 'Repeat', helper: 'Say it again', icon: Repeat, tone: 'lavender' },
   { id: 'IDEA', label: 'I have an idea', helper: 'I want to share', icon: Lightbulb, tone: 'sun' },
   { id: 'BUILD', label: 'Build', helper: 'Make or put together', icon: Puzzle, tone: 'blue' },
   { id: 'HELP', label: 'Help', helper: 'I need support', icon: HandHelping, tone: 'teal' },

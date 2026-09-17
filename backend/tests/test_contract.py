@@ -121,7 +121,7 @@ class ExpandContractTest(unittest.TestCase):
         self.mock_get_profile = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _event(self, icons=("CONFUSED", "BUILD", "HELP"), words=(), context="", profile_id="demo"):
+    def _event(self, icons=("REPEAT", "BUILD", "HELP"), words=(), context="", profile_id="demo"):
         tokens = [{"kind": "icon", "id": icon} for icon in icons]
         tokens += [{"kind": "word", "word": word} for word in words]
         return {
@@ -266,7 +266,7 @@ class ExpandContractTest(unittest.TestCase):
     def test_missing_context_returns_400(self):
         event = {
             "body": json.dumps(
-                {"tokens": [{"kind": "icon", "id": "CONFUSED"}], "profileId": "demo"}
+                {"tokens": [{"kind": "icon", "id": "REPEAT"}], "profileId": "demo"}
             )
         }
         result = expand_handler(event, None)
@@ -298,7 +298,7 @@ class ExpandContractTest(unittest.TestCase):
         event = {
             "body": json.dumps(
                 {
-                    "tokens": [{"kind": "icon", "id": "CONFUSED", "extra": True}],
+                    "tokens": [{"kind": "icon", "id": "REPEAT", "extra": True}],
                     "context": "",
                     "profileId": "demo",
                 }
@@ -451,7 +451,7 @@ class ExpandContractTest(unittest.TestCase):
         scripted = fixture["profiles"]["demo"]["response"]["candidates"]
         self.assertNotEqual(body["candidates"], scripted)
         for candidate in body["candidates"]:
-            self.assertIn("confused, build, help", candidate["text"].lower())
+            self.assertIn("repeat, build, help", candidate["text"].lower())
 
 
 class SimplifyContractTest(unittest.TestCase):
