@@ -1,7 +1,7 @@
 {
   "defaultProfileId": "demo",
   "request": {
-    "icons": ["CONFUSED", "BUILD", "HELP"],
+    "icons": ["REPEAT", "BUILD", "HELP"],
     "context": "classroom group project"
   },
   "profiles": {
@@ -14,9 +14,9 @@
       },
       "response": {
         "candidates": [
-          { "id": "c1", "text": "I'm confused about building this. Can you help?" },
-          { "id": "c2", "text": "I don't understand this part. Please help me build it." },
-          { "id": "c3", "text": "How do I build this? I need help." }
+          { "id": "c1", "text": "Can you say that again about building this? I need help." },
+          { "id": "c2", "text": "Please repeat that. I need help building it." },
+          { "id": "c3", "text": "I didn't catch that. Can you help me build it?" }
         ]
       }
     },
@@ -29,9 +29,9 @@
       },
       "response": {
         "candidates": [
-          { "id": "c1", "text": "I'm not sure how to build this. Could we work through it together?" },
-          { "id": "c2", "text": "This build is confusing me. Can someone explain how to approach it?" },
-          { "id": "c3", "text": "I need some help understanding how this goes together." }
+          { "id": "c1", "text": "Could you repeat that part about building this? I'd like to understand." },
+          { "id": "c2", "text": "I missed what you said about building this. Can we go over it again?" },
+          { "id": "c3", "text": "Can you say that again? I need help putting this together." }
         ]
       }
     }

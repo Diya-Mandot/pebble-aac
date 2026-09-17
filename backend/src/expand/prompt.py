@@ -14,7 +14,7 @@ from ..common.icons import IconID
 EXPAND_TOOL_NAME = "submit_expansion_candidates"
 
 ICON_GUIDANCE = {
-    IconID.CONFUSED.value: "uncertain, unclear, or not understanding",
+    IconID.REPEAT.value: "asking someone to say or repeat something again",
     IconID.IDEA.value: "an idea, suggestion, or possible approach",
     IconID.BUILD.value: "build, make, assemble, or work on something",
     IconID.HELP.value: "request or offer help",
@@ -50,7 +50,7 @@ Hard rules:
 - Return the result only through the submit_expansion_candidates tool. Do not answer in free text.
 
 Frozen icon guidance:
-CONFUSED: uncertain, unclear, or not understanding
+REPEAT: asking someone to say or repeat something again
 IDEA: an idea, suggestion, or possible approach
 BUILD: build, make, assemble, or work on something
 HELP: request or offer help

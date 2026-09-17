@@ -3,7 +3,7 @@ from enum import Enum
 
 
 class IconID(str, Enum):
-    CONFUSED = "CONFUSED"
+    REPEAT = "REPEAT"
     IDEA = "IDEA"
     BUILD = "BUILD"
     HELP = "HELP"

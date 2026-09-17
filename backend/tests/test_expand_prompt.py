@@ -66,14 +66,14 @@ class ExpandPromptTest(unittest.TestCase):
     def test_profile_fixture_text_is_reviewed_and_contains_no_added_specifics(self):
         expected = {
             "demo": [
-                "I'm confused about building this. Can you help?",
-                "I don't understand this part. Please help me build it.",
-                "How do I build this? I need help.",
+                "Can you say that again about building this? I need help.",
+                "Please repeat that. I need help building it.",
+                "I didn't catch that. Can you help me build it?",
             ],
             "demo_alt": [
-                "I'm not sure how to build this. Could we work through it together?",
-                "This build is confusing me. Can someone explain how to approach it?",
-                "I need some help understanding how this goes together.",
+                "Could you repeat that part about building this? I'd like to understand.",
+                "I missed what you said about building this. Can we go over it again?",
+                "Can you say that again? I need help putting this together.",
             ],
         }
         actual = {

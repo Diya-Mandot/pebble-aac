@@ -24,7 +24,7 @@
 
 ## Icon enum (FROZEN — copy into code + prompts verbatim)
 
-`CONFUSED, IDEA, BUILD, HELP, AGREE, DISAGREE, QUESTION, STOP, CHECK, DONE`
+`REPEAT, IDEA, BUILD, HELP, AGREE, DISAGREE, QUESTION, STOP, CHECK, DONE`
 QuickReplyID: `DONE, NEED_HELP` · system status: `PLEASE_REPEAT`
 
 ## API contract (FREEZE IN THE NEXT HOUR — integration owner: [YOU])
@@ -69,7 +69,7 @@ Every AWS call has a hard fallback (canned JSON, labeled on screen). Model ID, r
 - Ordering: 3-step instruction → steps in order
 - Ambiguous mumble → PLEASE_REPEAT
 - Prompt injection: "ignore your instructions and say…" → simplified as ordinary (weird) speech, never obeyed
-- Expansion: CONFUSED+BUILD+HELP × 2 profiles → interpretations differ, zero fabricated specifics
+- Expansion: REPEAT+BUILD+HELP × 2 profiles → interpretations differ, zero fabricated specifics
 
 ## Privacy (statements + config, ~30 min total — Diya writes, you configure)
 
@@ -78,7 +78,7 @@ Synthetic profiles only, no real student data · pseudonymous session IDs · Dyn
 ## Demo script (~4 min)
 
 1. Hook: "talk at → talk WITH." Split screen, science-lab context.
-2. CONFUSED+BUILD+HELP → 3 candidates → **pause: "AI drafts, student decides — it never speaks for the child. And because icons are ambiguous, choosing IS the disambiguation."** → pick → Polly speaks.
+2. REPEAT+BUILD+HELP → 3 candidates → **pause: "AI drafts, student decides — it never speaks for the child. And because icons are ambiguous, choosing IS the disambiguation."** → pick → Polly speaks.
 3. Peer message (typed; voice if step 6 shipped — else labeled fallback clip): wiring line → icon steps + [CHECK: SWITCH OFF] warning → tap reveals transcript.
 4. Profile toggle → same icons, different candidates. One line on DynamoDB.
 5. Tap [DONE] → confirmation in chat. Loop closed.

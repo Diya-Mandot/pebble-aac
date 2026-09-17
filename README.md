@@ -46,7 +46,7 @@ substitute for real auth in a classroom deployment.
 
 ## Demo flow
 
-1. On **Maya's voice**, select **Confused**, **Build**, and **Help**.
+1. On **Maya's voice**, select **Repeat**, **Build**, and **Help**.
 2. Choose **Create my message**, review the three interpretations, and approve one -- it's spoken aloud.
 3. Click the mic button to start listening, then say aloud: `take the red wire, connect it to the battery first, but make sure the switch is off`.
 4. See the ordered steps (each one tappable to hear it again), a prominent safety check, the transcript, and quick replies -- plus the **Words from the conversation** row filling in with tappable context words.

@@ -75,7 +75,7 @@ type IconDefinition = {
 // decorative per-card hue -- boldness comes from a few strong, consistent signals, not ten
 // competing colors. Grid position/order is unrelated to band and never changes.
 const ICONS: IconDefinition[] = [
-  { id: 'CONFUSED', label: 'Repeat', helper: 'Say it again', icon: Repeat, image: '/aac/repeat.png', tone: 'regulate' },
+  { id: 'REPEAT', label: 'Repeat', helper: 'Say it again', icon: Repeat, image: '/aac/repeat.png', tone: 'regulate' },
   { id: 'IDEA', label: 'I have an idea', helper: 'I want to share', icon: Lightbulb, image: '/aac/idea.png', tone: 'contribute' },
   { id: 'BUILD', label: 'Build', helper: 'Make or put together', icon: Puzzle, image: '/aac/build.png', tone: 'contribute' },
   { id: 'HELP', label: 'Help', helper: 'I need support', icon: HandHelping, image: '/aac/help.png', tone: 'regulate' },
