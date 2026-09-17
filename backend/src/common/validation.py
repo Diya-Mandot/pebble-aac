@@ -1,7 +1,12 @@
 """Shared request validation. Returns an error string, or None if the request is valid."""
 import json
 
+from jsonschema import Draft202012Validator
+
 from .icons import ICON_IDS, QUICK_REPLY_IDS
+from ..expand.prompt import EXPAND_OUTPUT_SCHEMA
+
+_EXPAND_OUTPUT_VALIDATOR = Draft202012Validator(EXPAND_OUTPUT_SCHEMA)
 
 
 def parse_json_body(raw_body):
@@ -74,6 +79,23 @@ def validate_expand_candidates(candidates) -> str | None:
         seen_ids.add(candidate_id)
         seen_texts.add(text)
 
+    return None
+
+
+def validate_expand_output(payload: object) -> str | None:
+    """Validates a payload against EXPAND_OUTPUT_SCHEMA (expand/prompt.py's Bedrock tool-use
+    schema) plus candidate-id uniqueness. Used to test that schema/fixtures stay self-consistent;
+    the live /expand path's runtime guard is validate_expand_candidates above."""
+    errors = sorted(
+        _EXPAND_OUTPUT_VALIDATOR.iter_errors(payload), key=lambda error: list(error.path)
+    )
+    if errors:
+        return errors[0].message
+
+    candidates = payload["candidates"]
+    candidate_ids = [candidate["id"] for candidate in candidates]
+    if len(candidate_ids) != len(set(candidate_ids)):
+        return "Candidate ids must be unique"
     return None
 
 
